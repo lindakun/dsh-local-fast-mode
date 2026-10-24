@@ -46,7 +46,7 @@ test('上游请求错误保持原样，避免掩盖失败', async () => {
   await assert.rejects(listener()(fast, async () => { throw failure }), error => error === failure)
 })
 
-test('第三步追加收尾提醒，新用户回合重置，复杂任务不会被强制拒绝', async () => {
+test('首步执行提醒，后续每步核对交付，新用户回合重置', async () => {
   let preStep
   apply(context((event, callback) => { if (event === 'agent/pre-step') preStep = callback }))
   const agent = fast.agent
@@ -54,7 +54,8 @@ test('第三步追加收尾提醒，新用户回合重置，复杂任务不会�
   const user = { source: { kind: 'user' } }
   const first = await preStep({ agent, messages: [user] }, async () => decision)
   assert.match(first.messages[0].content[0].text, /最小可运行版本/)
-  assert.equal(await preStep({ agent, messages: [] }, async () => decision), decision)
+  const second = await preStep({ agent, messages: [] }, async () => decision)
+  assert.match(second.messages[0].content[0].text, /1 个模型步骤/)
   const third = await preStep({ agent, messages: [] }, async () => decision)
   assert.equal(third.kind, 'enter')
   assert.equal(third.messages[0].source.kind, 'fast-mode-budget')
@@ -125,7 +126,7 @@ test('预设切换使用实际挂载状态，切出后停止干预，重新进�
   agent.ctx.preset = 'fast'
   assert.match((await step()).messages[0].content[0].text, /快速模式执行提醒/)
   assert.deepEqual(await request(), { model: 'example', reasoningEffort: 'low', maxTokens: 8192 })
-  assert.equal(await step(), decision)
+  assert.match((await step()).messages[0].content[0].text, /1 个模型步骤/)
   assert.match((await step()).messages[0].content[0].text, /2 个模型步骤/)
 
   agent.ctx.preset = 'standard'
@@ -146,4 +147,34 @@ test('创建时为 fast 但当前已切出或未绑定时，不按旧 header 注
     const selection = { model: 'example' }
     assert.equal(await handlers.get('agent/request')({ agent }, async () => selection), selection)
   }
+})
+
+test('提醒保留本回合用户目标，通知不替换目标，新请求替换且不同 agent 隔离', async () => {
+  let preStep
+  apply(context((event, callback) => { if (event === 'agent/pre-step') preStep = callback }))
+  const agent = { ctx: { preset: 'fast' } }
+  const other = { ctx: { preset: 'fast' } }
+  const user = text => ({ source: { kind: 'user' }, content: [{ type: 'text', text }] })
+  const step = (subject, messages = []) => preStep({ agent: subject, messages }, async () => ({ kind: 'enter', messages: [] }))
+  const notice = result => result.messages[0].content[0].text
+  assert.match(notice(await step(agent, [user('只审计当前版本的导入异常')])), /只审计当前版本的导入异常/)
+  await step(agent, [{ source: { kind: 'fast-mode-budget' }, content: [{ type: 'text', text: '不应成为任务' }] }])
+  const third = notice(await step(agent))
+  assert.match(third, /只审计当前版本的导入异常/)
+  assert.doesNotMatch(third, /不应成为任务/)
+  assert.doesNotMatch(notice(await step(other, [user('修复页面交互')])), /导入异常/)
+  const reset = notice(await step(agent, [user('现在深入定位存储故障')]))
+  assert.match(reset, /现在深入定位存储故障/)
+  assert.doesNotMatch(reset, /只审计当前版本/)
+})
+
+test('用户请求摘录有界，不把非文本内容转换为指令', async () => {
+  let preStep
+  apply(context((event, callback) => { if (event === 'agent/pre-step') preStep = callback }))
+  const agent = { ctx: { preset: 'fast' } }
+  const message = { source: { kind: 'user' }, content: [{ type: 'image', data: '不应注入' }, { type: 'text', text: '甲'.repeat(1200) + '超出边界' }] }
+  const result = await preStep({ agent, messages: [message] }, async () => ({ kind: 'enter', messages: [] }))
+  const text = result.messages[0].content[0].text
+  assert.ok(text.endsWith('甲'.repeat(1200)))
+  assert.doesNotMatch(text, /不应注入|超出边界/)
 })

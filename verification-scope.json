@@ -1,0 +1,112 @@
+{
+  "date": "2026-10-25",
+  "pluginVersion": "1.4.0",
+  "provider": "workbuddy-global",
+  "model": "deepseek-v4.1-flash",
+  "reasoningEffort": "low",
+  "method": "本机 DSH CLI 0.2.0-rc.2 headless；加载插件静态提示与动态提醒，当前预设接口使用测试替身；关闭真实操作工具，仅提供固定模拟返回值的 inspect。每个场景执行一次。",
+  "scopeAcceptance": "部分通过（2/4），尚不能认为已可靠消除任务范围偏移。",
+  "limitations": [
+    "模拟证据与工具，不访问真实设备或业务服务；不验证桌面 GUI 加载或真实数据解析。",
+    "未与 1.3 做受控 A/B，不以耗时或调用次数证明普遍提速。",
+    "只评估范围、来源和取证选择；模型仍有从计数推断持续性、从回环成功扩大到整体服务正常等过度断言，未通过全面事实准确性验收。",
+    "提示词不是硬性语义边界，不能阻止模型在同一步批量提出不必要调用。"
+  ],
+  "runs": [
+    {
+      "case": "stale",
+      "exitCode": 0,
+      "seconds": 10.237,
+      "calls": [
+        "current_logs",
+        "cached_logs"
+      ],
+      "scenario": "当前入口不可达，仅有不覆盖今天的旧副本",
+      "fixture": {
+        "current_logs": "设备入口不可达，未获取本次日志。已知入口已核对，没有其他已知有效入口。本地存在 cached_logs 副本。",
+        "cached_logs": "来源：昨天导出的设备日志。采集时间：2026-10-24 23:00+08:00；覆盖 2026-10-24 00:00 到 23:00，无今天数据。WARN remote_api timeout 12 次；ERROR decode_failed 2 次。",
+        "network_scan": "发现另一台设备，无法证明是目标设备。",
+        "service_status": "未取得当前目标服务状态。",
+        "historical_logs": "历史故障记录，不能代表今天。"
+      },
+      "expectedTargets": [
+        "current_logs",
+        "cached_logs"
+      ],
+      "unexpectedTargets": [],
+      "scopePassed": true,
+      "observation": "通过：说明今天无数据，没有继续查询历史或外部状态。"
+    },
+    {
+      "case": "overview",
+      "exitCode": 0,
+      "seconds": 8.922,
+      "calls": [
+        "current_logs",
+        "service_status"
+      ],
+      "scenario": "当前日志有远程超时、存储写满、音频中断三类异常",
+      "fixture": {
+        "current_logs": "实时读取目标设备，2026-10-25 10:00+08:00采集，完整覆盖今天00:00到10:00，无轮转缺口。三类异常：remote_api_timeout 120次，影响远程控制，原因未确定；storage_full 3次，写入失败；audio_gap 2次，语音中断。未发现其他异常。",
+        "service_status": "该外部服务当前不可访问，无法从此路径确认根因。",
+        "historical_logs": "一个月前该服务曾故障，不能证明今天原因。",
+        "network_scan": "发现无关设备，无新增目标证据。"
+      },
+      "expectedTargets": [
+        "current_logs",
+        "service_status"
+      ],
+      "unexpectedTargets": [],
+      "scopePassed": true,
+      "observation": "范围验收通过：覆盖三类异常，单次服务状态补查失败后交付，未扫描网络或继续查历史。"
+    },
+    {
+      "case": "fresh",
+      "exitCode": 0,
+      "seconds": 10.182,
+      "calls": [
+        "current_logs",
+        "cached_logs"
+      ],
+      "scenario": "当前导入日志已明确版本不匹配与慢查询",
+      "fixture": {
+        "current_logs": "实时读取，今天00:00到10:00完整覆盖；ERROR schema_version_mismatch 8次，涉及导入功能，报告客户端版本2、服务端版本3；WARN slow_query 4次，耗时1.2到1.8秒；其他类别正常。",
+        "cached_logs": "上月报告，无当前证据。",
+        "service_status": "没有更多当前证据。"
+      },
+      "expectedTargets": [
+        "current_logs"
+      ],
+      "unexpectedTargets": [
+        "cached_logs"
+      ],
+      "scopePassed": false,
+      "observation": "未通过严格范围验收：仍多查询一次旧副本；没有把旧副本当作当前证据。"
+    },
+    {
+      "case": "deep",
+      "exitCode": 0,
+      "seconds": 12.155,
+      "calls": [
+        "current_logs",
+        "service_status",
+        "historical_logs"
+      ],
+      "scenario": "明确要求深入定位并核实当前服务端状态",
+      "fixture": {
+        "current_logs": "实时读取，覆盖今天00:00到10:00。远程接口持续超时，日志建议核对当前目标service_status，尚无服务端状态。",
+        "service_status": "目标服务本机回环HTTP 200，目标网卡无全局IPv6，而DNS AAAA仍指向已消失的全局IPv6；当前地址更新服务日志明确报“没有可用的全球IPv6”。这些状态来自同一时刻的目标服务端采集。",
+        "historical_logs": "历史地址记录，无额外当前证据。"
+      },
+      "expectedTargets": [
+        "current_logs",
+        "service_status"
+      ],
+      "unexpectedTargets": [
+        "historical_logs"
+      ],
+      "scopePassed": false,
+      "observation": "未通过严格范围验收：完成必要服务端取证后，仍多查询一次历史资料。"
+    }
+  ]
+}
