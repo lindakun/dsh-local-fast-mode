@@ -1,0 +1,31 @@
+{
+  "date": "2026-10-24",
+  "prompt": "现在有哪些mcp服务",
+  "provider": "workbuddy-global",
+  "model": "deepseek-v4.1-flash",
+  "reasoningEffort": "low",
+  "note": "单次实测，原会话与新会话的 MCP 配置状态不同；耗时同时受网络、模型和缓存影响。",
+  "runs": [
+    {
+      "session": "session-24f51503-0ba0-465e-9ca0-597520b055b1",
+      "seconds": 155.124,
+      "modelSteps": 39,
+      "toolCalls": 67,
+      "reminders": 0
+    },
+    {
+      "session": "session-02d13080-8d7e-425b-b832-df4216a43d71",
+      "seconds": 32.499,
+      "modelSteps": 9,
+      "toolCalls": 13,
+      "reminders": 0
+    },
+    {
+      "session": "session-d21ed6d3-2f8b-436d-86ad-34326fbe48a7",
+      "seconds": 10.103,
+      "modelSteps": 3,
+      "toolCalls": 2,
+      "reminders": 1
+    }
+  ]
+}

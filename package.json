@@ -1,0 +1,19 @@
+{
+  "name": "dsh-local-fast-mode",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "本机 DSH 快速模式：限制简单查询范围并保留用户思考档位",
+  "exports": {
+    "./tuning": "./fast-tuning.mjs",
+    "./cordis.patch.yml": "./cordis.patch.yml"
+  },
+  "scripts": {
+    "test": "node --test fast-tuning.test.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}
