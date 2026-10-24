@@ -16,7 +16,10 @@ test('显式选择的 off、low、high、max 均不被覆盖', async () => {
   const request = listener()
   for (const reasoningEffort of ['off', 'low', 'high', 'max']) {
     const selection = { provider: 'example', model: 'example', reasoningEffort }
-    assert.equal(await request(fast, async () => selection), selection)
+    const result = await request(fast, async () => selection)
+    assert.equal(result.reasoningEffort, reasoningEffort)
+    assert.equal(result.provider, selection.provider)
+    assert.equal(result.maxTokens, undefined)
   }
 })
 
@@ -45,13 +48,33 @@ test('第三步追加收尾提醒，新用户回合重置，复杂任务不会�
   const agent = fast.agent
   const decision = { kind: 'enter', messages: [] }
   const user = { source: { kind: 'user' } }
-  assert.equal(await preStep({ agent, messages: [user] }, async () => decision), decision)
+  const first = await preStep({ agent, messages: [user] }, async () => decision)
+  assert.match(first.messages[0].content[0].text, /最小可运行版本/)
   assert.equal(await preStep({ agent, messages: [] }, async () => decision), decision)
   const third = await preStep({ agent, messages: [] }, async () => decision)
   assert.equal(third.kind, 'enter')
   assert.equal(third.messages[0].source.kind, 'fast-mode-budget')
   assert.match(third.messages[0].content[0].text, /2 个模型步骤/)
-  assert.equal(await preStep({ agent, messages: [user] }, async () => decision), decision)
+  const reset = await preStep({ agent, messages: [user] }, async () => decision)
+  assert.match(reset.messages[0].content[0].text, /快速模式执行提醒/)
+})
+
+test('默认不加未经通道验证的输出上限，保留用户显式预算', async () => {
+  const request = listener()
+  for (const maxTokens of [1024, 32768]) {
+    const result = await request(fast, async () => ({ maxTokens, reasoningEffort: 'high' }))
+    assert.deepEqual(result, { maxTokens, reasoningEffort: 'high' })
+  }
+  assert.equal((await request(fast, async () => ({}))).maxTokens, undefined)
+})
+
+test('可以调整缺省输出预算，非法预算在加载时拒绝', async () => {
+  let request
+  apply({ on(event, callback) { if (event === 'agent/request') request = callback } }, { maxTokens: 8192 })
+  assert.equal((await request(fast, async () => ({}))).maxTokens, 8192)
+  for (const maxTokens of [0, -1, 1.5, NaN, '8192']) {
+    assert.throws(() => apply({ on() {} }, { maxTokens }), /maxTokens/)
+  }
 })
 
 test('收尾提醒不改写被拒绝的步骤和其他预设', async () => {
@@ -63,5 +86,18 @@ test('收尾提醒不改写被拒绝的步骤和其他预设', async () => {
   const agent = { session: { header: { agentPreset: 'standard' } } }
   for (let i = 0; i < 5; i++) {
     assert.equal(await preStep({ agent, messages: [] }, async () => decision), decision)
+  }
+})
+
+test('长任务的视觉迭代不因步骤多而被取消或收起工具', async () => {
+  let preStep
+  const agent = {
+    session: { header: { agentPreset: 'fast' } },
+    ctx: { tools: { restrict() { assert.fail('不应限制质量验证所需工具') } } },
+  }
+  apply({ on(event, callback) { if (event === 'agent/pre-step') preStep = callback } })
+  const next = async () => ({ kind: 'enter', messages: [] })
+  for (let step = 1; step <= 50; step++) {
+    assert.equal((await preStep({ agent, messages: [] }, next)).kind, 'enter')
   }
 })

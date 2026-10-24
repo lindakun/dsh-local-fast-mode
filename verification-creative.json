@@ -1,0 +1,52 @@
+{
+  "task": "2.5D SVG 鹈鹕骑车绕土星环",
+  "provider": "workbuddy-global",
+  "model": "deepseek-v4.1-flash",
+  "reasoningEffort": "low",
+  "note": "候选实验被人工停止，不能比较完整完成耗时。16,384 输出预算在该通道未形成可靠限制；最终版本默认关闭此选项，不限制视觉迭代步骤。",
+  "runs": [
+    {
+      "variant": "complete-baseline",
+      "elapsedSeconds": 750.645,
+      "endReason": {
+        "kind": "completed"
+      },
+      "firstArtifactToolSeconds": 470.336,
+      "completedModelSteps": 27,
+      "toolCalls": 26,
+      "outputTokensCompletedSteps": 115634,
+      "requestedMaxTokens": null,
+      "stepsExceedingRequestedBudget": []
+    },
+    {
+      "variant": "execution-reminder-and-16384-budget-candidate",
+      "elapsedSeconds": 503.834,
+      "endReason": {
+        "kind": "aborted",
+        "reason": {
+          "kind": "user"
+        }
+      },
+      "firstArtifactToolSeconds": 304.927,
+      "completedModelSteps": 24,
+      "toolCalls": 23,
+      "outputTokensCompletedSteps": 67774,
+      "requestedMaxTokens": 16384,
+      "stepsExceedingRequestedBudget": [
+        18297,
+        19807
+      ]
+    }
+  ],
+  "finalVersionSmokeTest": {
+    "task": "最小 SVG 圆点轨道 HTML，限60行并检查脚本语法",
+    "elapsedSeconds": 14.813,
+    "firstWriteToolSeconds": 9.508,
+    "modelSteps": 3,
+    "toolCalls": 3,
+    "endReason": {
+      "kind": "completed"
+    },
+    "note": "仅验证最终配置能正常生成文件与执行检查，不代表完整鹈鹕动画的性能或质量。"
+  }
+}
