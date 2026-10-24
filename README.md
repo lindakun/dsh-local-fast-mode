@@ -1,7 +1,19 @@
-# DSH 本机快速模式插件
+# DSH 快速模式：缓解 DeepSeek V4.1 Flash 1017 过度思考
 
-独立的本地 bundle，通过 DSH 的 `dsh.bundle.patch` 声明 `fast` 预设。
-插件源码保存在本目录，以 `link:` 依赖接入 desktop profile，不修改应用包、内置模块或服务器。
+**本插件专门为缓解 DSH 使用 `deepseek-v4.1-flash-1017` 时出现的“雷霆思考”或过度思考现象而制作。**
+典型表现是：一个简单问题，本来只需查看一次配置，却不断扩大搜索范围、反复确认、
+连续调用几十次工具，迟迟不给出答案。
+
+本插件通过限制简单查询范围、明确停止条件、在回合中注入收尾提醒，帮助模型尽快回答。
+它是独立的 DSH bundle，通过 `dsh.bundle.patch` 声明“快速模式”（`fast`）预设，
+不修改应用包、内置代码或模型本身。
+
+## 针对的问题与适用范围
+
+- 主要目标：DSH + `deepseek-v4.1-flash-1017` 的简单问答出现过度调查、重复验证和工具调用迟迟不收尾。
+- 本次验证通过 WorkBuddy 国际版接入；日志记录的模型 ID 为 `deepseek-v4.1-flash`，供应商目录描述标注为 V4.1-Flash-1017。
+- “雷霆思考”是这里对上述体验的俗称，并不表示已定位模型内部推理机制的缺陷。
+- 插件优化的是 DSH 中的提示词与执行节奏，不能保证消除所有过度思考，也没有针对其他模型或接入渠道完成相同验证。
 
 ## 行为
 
@@ -42,12 +54,35 @@
 
 ## 安装与更新
 
-在 DSH 的插件管理器中添加 `link:/Users/linda/code/dsh/fast-mode-config`。
+推荐先克隆仓库，方便后续用 Git 更新：
+
+```bash
+git clone https://github.com/lindakun/dsh-local-fast-mode.git
+cd dsh-local-fast-mode
+npm test
+pwd
+```
+
+在 DSH 的插件管理器中添加 `link:<上一步输出的绝对路径>`，安装后新建会话并选择“快速模式”。
+也可以在支持 GitHub 安装源的插件管理器中使用 `github:lindakun/dsh-local-fast-mode`；
+本次实测采用本地 `link:` 安装方式。
 插件须同时出现在 profile 的 `dependencies` 与 `dsh.profile.bundles` 中。
 若已有内嵌的同名 `fast` 声明，先备份并移除旧声明，避免重复预设 ID。
 
-本机首次安装遇到桌面内置 pnpm 11 与已有 pnpm 10 store 冲突，因此使用现有
-pnpm 10 添加链接，再在 profile 的 bundle 列表注册。未修改全局 pnpm 配置。
+如果桌面内置 pnpm 与已有依赖使用的 pnpm 主版本不同，可能遇到
+`ERR_PNPM_UNEXPECTED_STORE`。本次安装使用与现有依赖一致的 pnpm 版本添加本地链接，
+再在 profile 的 bundle 列表注册；不要为安装此插件随意切换全局 store 或升级其他插件。
+
+本地链接安装后的更新方式：
+
+```bash
+cd <插件克隆目录>
+git pull --ff-only
+npm test
+```
+
+测试通过后重启 DSH，新建“快速模式”会话验证。GitHub 直接安装的副本请使用
+当前 DSH 版本支持的插件更新流程；仓库推送不会自动改写已安装副本。
 
 普通应用更新不会直接改写本目录的源码；链接与 bundle 注册均保存在用户 profile。
 本地目录需要持续保留，删除、移动或重建 profile 后需要重新添加链接。
@@ -57,8 +92,7 @@ DSH 仍处于预览期，升级可能改变 Cordis 接口或预设配置格式�
 
 ## 回滚
 
-优化前的 desktop profile 文件保存在 `/Users/linda/.dsh/backups/fast-mode-20261024/`。
-首次迁移的完整回滚需在退出 DSH 后恢复该目录中的 `cordis.patch.yml`、`package.json`、
+安装前请自行备份 desktop profile。首次迁移的完整回滚需在退出 DSH 后恢复备份中的 `cordis.patch.yml`、`package.json`、
 `pnpm-lock.yaml` 与 `fast-tuning.mjs`，再启动应用。恢复整份 profile 会撤回备份之后的其他设置，
 因此有后续配置改动时应只针对本插件移除依赖、bundle 条目并恢复旧预设声明。
 

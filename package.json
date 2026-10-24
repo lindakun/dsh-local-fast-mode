@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "本机 DSH 快速模式：限制简单查询范围并保留用户思考档位",
+  "description": "缓解 DSH 使用 deepseek-v4.1-flash-1017 时的雷霆思考、过度调查与冗余工具调用",
   "exports": {
     "./tuning": "./fast-tuning.mjs",
     "./cordis.patch.yml": "./cordis.patch.yml"
@@ -15,5 +15,19 @@
     "bundle": {
       "patch": "./cordis.patch.yml"
     }
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lindakun/dsh-local-fast-mode.git"
+  },
+  "homepage": "https://github.com/lindakun/dsh-local-fast-mode#readme",
+  "bugs": {
+    "url": "https://github.com/lindakun/dsh-local-fast-mode/issues"
+  },
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "deepseek-v4.1-flash-1017",
+    "fast-mode"
+  ]
 }
