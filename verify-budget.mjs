@@ -28,7 +28,7 @@ class Adapter extends LlmAdapter {
     this.count++;
     const tools=(options.tools||[]).map(t=>t.name);
     record({kind:'request', tools, index:this.count});
-    const wantsTool = (tools.length>0 && this.count <= (scenario.full ? 6 : 20)) || scenario.rogue;
+    const wantsTool = (tools.length>0 && this.count <= (scenario.modelToolRounds ?? (scenario.full ? 6 : 20))) || scenario.rogue;
     if(wantsTool) {
       for(let i=0;i<(scenario.batch||1);i++) {
         const name=scenario.unknown?'nonexistent':scenario.shell?'bash':'inspect';
@@ -39,7 +39,7 @@ class Adapter extends LlmAdapter {
       yield {type:'finish',reason:{kind:'tool-calls'}};
     } else {
       yield {type:'block-start',index:0,blockType:'text'};
-      yield {type:'block-end',index:0,block:{type:'text',text:'已确认：仅完成有限取证。未确认：深层原因尚未验证。是否继续深入调查由用户决定。'}};
+      yield {type:'block-end',index:0,block:{type:'text',text:'已确认：仅完成有限取证。未确认：深层原因尚未验证。是否继续深入调查？'}};
       yield {type:'finish',reason:{kind:'stop'}};
     }
   }
@@ -64,13 +64,16 @@ export function apply(ctx) {
 `)
 const disabled = ['tool-plugin-manager', 'tool-bash', 'tool-pwsh', 'tool-jobs', 'tool-fs', 'tool-fs-search', 'agent-instructions', 'skill', 'skill-filesystem', 'skill-badge', 'tool-skill', 'tool-subagent-control', 'tool-subagent-list-agents', 'tool-subagent', 'tool-subagent-fork', 'tool-workflow', 'tool-todo', 'tool-goal', 'tool-ralph', 'tool-web', 'mcp-resources', 'session-title-llm']
 const cases = [
-  { id: 'default-round-cap', bodies: 5 },
+  { id: 'default-round-cap', bodies: 10 },
   { id: 'parallel-call-cap', batch: 12, config: { maxToolCalls: 3 }, bodies: 3 },
   { id: 'unknown-tool-cap', unknown: true, config: { maxToolRounds: 2 }, bodies: 0 },
   { id: 'cooperative-timeout', slow: true, config: { toolTimeoutMs: 20 }, bodies: 1 },
   { id: 'shell-cancellation', shell: true, config: { toolTimeoutMs: 100 }, bodies: 1 },
   { id: 'shell-background', shell: true, background: true, config: { maxToolCalls: 1 }, bodies: 1 },
   { id: 'full-mode', full: true, config: { maxToolRounds: 1, maxToolCalls: 1 }, bodies: 6 },
+  { id: 'authorized-request', task: '开始实施并完成必要验证', modelToolRounds: 6, config: { maxToolRounds: 1, maxToolCalls: 1 }, bodies: 6 },
+  { id: 'quoted-request', task: '请分析这段引用：“开始实施并完成必要验证”', config: { maxToolRounds: 1 }, bodies: 1 },
+  { id: 'confirmation', confirm: true, modelToolRounds: 6, config: { maxToolRounds: 1, maxToolCalls: 1 }, bodies: 1 },
   { id: 'rogue-final-call', rogue: true, config: { maxToolRounds: 1 }, bodies: 1 },
 ]
 const runs = []
@@ -84,7 +87,7 @@ for (const scenario of cases) {
   ]))
   const trace = join(temp, scenario.id + '-trace.jsonl')
   const started = Date.now()
-  const result = spawnSync(process.execPath, [cli, '--profile', 'headless', '--patch', patch, '--json', '读取必要材料后给出已确认结果，未知部分列为疑点。'], {
+  const result = spawnSync(process.execPath, [cli, '--profile', 'headless', '--patch', patch, '--json', scenario.task ?? '读取必要材料后给出已确认结果，未知部分列为疑点。'], {
     cwd: temp, encoding: 'utf8', timeout: 20000, maxBuffer: 4 * 1024 * 1024,
     env: { ...process.env, DSH_HOME: join(temp, 'home-' + scenario.id), BUDGET_CASE: JSON.stringify(scenario), BUDGET_TRACE: trace },
   })
@@ -97,7 +100,7 @@ for (const scenario of cases) {
   const requests = records.filter(row => row.kind === 'request')
   const bodies = records.filter(row => scenario.shell ? row.kind === 'dispatch' && row.name === 'bash' : row.kind === 'body').length
   assert.equal(bodies, scenario.bodies, scenario.id + ' 实际工具执行次数')
-  if (!scenario.full) assert.equal(requests.at(-1).tools.length, 0, scenario.id + ' 最终请求仍包含工具')
+  if (!scenario.full && scenario.id !== 'authorized-request') assert.equal(requests.at(-1).tools.length, 0, scenario.id + ' 最终请求仍包含工具')
   if (scenario.unknown) assert.equal(requests.length, 3)
   if (scenario.slow) assert.ok(records.some(row => row.kind === 'cancelled'))
   if (scenario.shell && !scenario.background) assert.ok(records.some(row => row.kind === 'dispatch-end' && row.name === 'bash' && row.aborted), '命令未收到取消')
@@ -112,6 +115,27 @@ for (const scenario of cases) {
   const row = { id: scenario.id, toolBodies: bodies, modelRequests: requests.length, requestToolCounts: requests.map(row => row.tools.length), elapsedMs: Date.now() - started, passed: true }
   runs.push(row)
   console.log(JSON.stringify(row))
+  if (scenario.confirm) {
+    const sessionId = events.find(row => row.type === 'session').sessionId
+    for (const [id, task, expectedBodies] of [['confirmed-continuation', '好', 6], ['authorization-revoked', '恢复预算限制，只看现有材料', 1]]) {
+      const nextTrace = join(temp, id + '-trace.jsonl')
+      const resumed = spawnSync(process.execPath, [cli, '--profile', 'headless', '--patch', patch, '--session-id', sessionId, '--json', task], {
+        cwd: temp, encoding: 'utf8', timeout: 20000, maxBuffer: 4 * 1024 * 1024,
+        env: { ...process.env, DSH_HOME: join(temp, 'home-' + scenario.id), BUDGET_CASE: JSON.stringify(scenario), BUDGET_TRACE: nextTrace },
+      })
+      writeFileSync(join(temp, id + '-events.jsonl'), resumed.stdout || '')
+      writeFileSync(join(temp, id + '-stderr.log'), resumed.stderr || '')
+      assert.equal(resumed.status, 0, id + ': ' + resumed.stderr)
+      const nextRecords = readFileSync(nextTrace, 'utf8').trim().split('\n').map(line => JSON.parse(line))
+      const nextRequests = nextRecords.filter(row => row.kind === 'request')
+      const nextBodies = nextRecords.filter(row => row.kind === 'body').length
+      assert.equal(nextBodies, expectedBodies, id)
+      assert.equal(nextRequests.at(-1).tools.length === 0, id === 'authorization-revoked')
+      const nextRow = { id, toolBodies: nextBodies, modelRequests: nextRequests.length, requestToolCounts: nextRequests.map(row => row.tools.length), passed: true }
+      runs.push(nextRow)
+      console.log(JSON.stringify(nextRow))
+    }
+  }
 }
 const report = { date: '2026-10-25', method: 'DSH headless 真实组装、工具调度与执行 guard；确定性测试适配器，不调用供应商或真实设备。预设服务使用替身。', cliVersion: JSON.parse(readFileSync(join(dirname(dirname(cli)), 'package.json'), 'utf8')).version, runs }
 if (process.argv[2]) writeFileSync(resolve(process.argv[2]), JSON.stringify(report, null, 2) + '\n')

@@ -67,9 +67,9 @@ test('拒绝的步骤不消耗预算，也不注入消息', async () => {
   assert.match(notice(await h.step(agent)), /当前为快速模式/)
 })
 
-test('默认五个工具批次后保留一次无工具回答，同批多个调用只占一轮', async () => {
+test('默认十个工具批次后保留一次无工具回答，同批多个调用只占一轮', async () => {
   const h = harness(), agent = h.agent(), assembly = { tools: [{ name: 'inspect' }], sections: [] }
-  for (let round = 1; round <= 5; round++) {
+  for (let round = 1; round <= 10; round++) {
     await h.step(agent)
     assert.equal(h.call(agent), undefined)
     assert.equal(h.call(agent), undefined)
@@ -206,4 +206,52 @@ test('idle 与销毁时释放预算状态', async () => {
     h.events.get(event)({ agent, status: 'idle' })
     assert.equal(await h.assemble(agent, assembly), assembly)
   }
+})
+
+test('明确授权在快速模式自动解除轮数与次数预算，不需要换预设', async () => {
+  const h = harness({ maxToolRounds: 1, maxToolCalls: 1 }), agent = h.agent()
+  assert.match(notice(await h.step(agent, [h.user('请深入排查并修复')])), /用户已明确授权/)
+  for (let i = 0; i < 25; i++) {
+    assert.equal(h.call(agent), undefined)
+    assert.equal((await h.step(agent)).kind, 'enter')
+  }
+  const assembly = { tools: [{ name: 'inspect' }] }
+  assert.equal(await h.assemble(agent, assembly), assembly)
+})
+
+test('预算结束后用户确认自动解除，工具通知和单纯问题不能解除', async () => {
+  const h = harness({ maxToolCalls: 1 }), agent = h.agent(), assembly = { tools: [{ name: 'inspect' }] }
+  await h.step(agent, [h.user('分析当前结果')]); h.call(agent)
+  await h.step(agent)
+  const reply = h.user('好')
+  h.events.get('agent/inbox/inserted')({ agent, message: reply })
+  assert.equal(await h.assemble(agent, assembly), assembly)
+  assert.match(notice(await h.step(agent, [reply])), /用户已明确授权/)
+  for (let i = 0; i < 5; i++) assert.equal(h.call(agent), undefined)
+  await h.step(agent, [h.user('另外查看新的对象')])
+  assert.equal(h.call(agent), undefined)
+  assert.match(h.call(agent), /预算已用尽/)
+})
+
+test('直接授权在 idle 后的同任务续问继承，恢复会话可从真实记录重建', async () => {
+  const h = harness({ maxToolCalls: 1 }), agent = h.agent()
+  await h.step(agent, [h.user('开始实施')])
+  h.events.get('agent/status')({ agent, status: 'idle' })
+  await h.step(agent, [h.user('进度如何？')])
+  assert.equal(h.call(agent), undefined)
+  assert.equal(h.call(agent), undefined)
+  const restored = h.agent()
+  restored.session.log = [{ type: 'user/message', data: h.user('开始实施') }]
+  await h.step(restored)
+  assert.equal(h.call(restored), undefined)
+  assert.equal(h.call(restored), undefined)
+})
+
+test('授权不解除单次执行超时，超时后不强制截断已授权工作', async () => {
+  const h = harness({ maxToolCalls: 1, toolTimeoutMs: 5 }), agent = h.agent()
+  await h.step(agent, [h.user('直接修复')]); h.call(agent)
+  const exec = { agent, signal: new AbortController().signal }
+  await h.events.get('tools/execute')(exec, async () => new Promise(resolve => exec.signal.addEventListener('abort', resolve, { once: true })))
+  assert.equal(await h.step(agent), h.decision)
+  assert.equal(h.call(agent), undefined)
 })

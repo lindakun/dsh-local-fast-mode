@@ -5,9 +5,14 @@
   "runs": [
     {
       "id": "default-round-cap",
-      "toolBodies": 5,
-      "modelRequests": 6,
+      "toolBodies": 10,
+      "modelRequests": 11,
       "requestToolCounts": [
+        2,
+        2,
+        2,
+        2,
+        2,
         2,
         2,
         2,
@@ -15,7 +20,7 @@
         2,
         0
       ],
-      "elapsedMs": 468,
+      "elapsedMs": 560,
       "passed": true
     },
     {
@@ -26,7 +31,7 @@
         2,
         0
       ],
-      "elapsedMs": 424,
+      "elapsedMs": 437,
       "passed": true
     },
     {
@@ -38,7 +43,7 @@
         2,
         0
       ],
-      "elapsedMs": 444,
+      "elapsedMs": 443,
       "passed": true
     },
     {
@@ -49,7 +54,7 @@
         2,
         0
       ],
-      "elapsedMs": 444,
+      "elapsedMs": 427,
       "passed": true
     },
     {
@@ -60,7 +65,7 @@
         3,
         0
       ],
-      "elapsedMs": 527,
+      "elapsedMs": 525,
       "passed": true
     },
     {
@@ -71,7 +76,7 @@
         6,
         0
       ],
-      "elapsedMs": 423,
+      "elapsedMs": 419,
       "passed": true
     },
     {
@@ -87,7 +92,70 @@
         2,
         2
       ],
-      "elapsedMs": 476,
+      "elapsedMs": 504,
+      "passed": true
+    },
+    {
+      "id": "authorized-request",
+      "toolBodies": 6,
+      "modelRequests": 7,
+      "requestToolCounts": [
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "elapsedMs": 495,
+      "passed": true
+    },
+    {
+      "id": "quoted-request",
+      "toolBodies": 1,
+      "modelRequests": 2,
+      "requestToolCounts": [
+        2,
+        0
+      ],
+      "elapsedMs": 442,
+      "passed": true
+    },
+    {
+      "id": "confirmation",
+      "toolBodies": 1,
+      "modelRequests": 2,
+      "requestToolCounts": [
+        2,
+        0
+      ],
+      "elapsedMs": 429,
+      "passed": true
+    },
+    {
+      "id": "confirmed-continuation",
+      "toolBodies": 6,
+      "modelRequests": 7,
+      "requestToolCounts": [
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "passed": true
+    },
+    {
+      "id": "authorization-revoked",
+      "toolBodies": 1,
+      "modelRequests": 2,
+      "requestToolCounts": [
+        2,
+        0
+      ],
       "passed": true
     },
     {
@@ -98,7 +166,7 @@
         2,
         0
       ],
-      "elapsedMs": 404,
+      "elapsedMs": 408,
       "passed": true
     }
   ]
