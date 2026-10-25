@@ -3,7 +3,7 @@
   "version": "1.7.0",
   "private": true,
   "type": "module",
-  "description": "缓解 DSH 使用 deepseek-v4.1-flash-1017 时的雷霆思考、过度调查与冗余工具调用",
+  "description": "DSH 快速模式：先返回已确认结论，未授权时按预算有限取证；另提供显式完整执行预设，不绑定设备、协议或具体业务",
   "exports": {
     "./tuning": "./fast-tuning.mjs",
     "./cordis.patch.yml": "./cordis.patch.yml"
