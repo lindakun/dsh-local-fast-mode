@@ -7,13 +7,14 @@ function harness(config = {}) {
   let guard
   const asked = []
   let answer
+  let hanging = false
   apply({
     agentPresets: { composedPreset: agentCtx => agentCtx.preset },
     tools: { guard(callback) { guard = callback } },
     on(event, callback) { events.set(event, callback) },
     get(name) {
       if (name !== 'userQuestions' || config.userQuestions === false) return
-      return { async ask(request) { asked.push(request); return answer } }
+      return { async ask(request) { asked.push(request); return hanging ? new Promise(() => {}) : answer } }
     },
   }, config)
   const agent = (preset = 'fast', header = preset) => ({
@@ -25,6 +26,7 @@ function harness(config = {}) {
   return {
     events, agent, user, decision, asked,
     reply(value) { answer = value },
+    hang() { hanging = true },
     step: (subject, messages = [], step = 1) => events.get('agent/pre-step')({ agent: subject, messages, turn: 1, step, signal: new AbortController().signal }, async () => decision),
     call: (subject, name = 'inspect', args = {}) => guard({ agent: subject, name, arguments: args }),
     request: (subject, selection) => events.get('agent/request')({ agent: subject }, async () => selection),
@@ -310,11 +312,11 @@ test('自由输入作为兜底：授权语义解除预算，无关文字按交�
   assert.match(decline.call(b), /预算已用尽/)
 })
 
-test('无应答者、抛错、超时与取消都退回原有强制回答，不虚构选择', async () => {
-  for (const mode of ['absent', 'throw', 'timeout']) {
+test('无应答者、抛错、空应答与取消都退回原有强制回答，不虚构选择', async () => {
+  for (const mode of ['absent', 'throw', 'empty']) {
     const h = harness({ maxToolCalls: 1, authorizePromptTimeoutMs: 20, userQuestions: mode !== 'absent' }), agent = h.agent()
     if (mode === 'throw') h.asked.push = () => { throw new Error('无应答者') }
-    if (mode === 'timeout') h.reply(undefined)
+    if (mode === 'empty') h.reply(undefined)
     await h.step(agent); h.call(agent)
     assert.deepEqual((await h.assemble(agent, { tools: [{ name: 'inspect' }] })).tools, [], mode)
     const answer = await h.step(agent)
@@ -322,6 +324,54 @@ test('无应答者、抛错、超时与取消都退回原有强制回答，不�
     assert.match(h.call(agent), /预算已用尽/, mode)
     assert.equal(agent.session.records.filter(([, data]) => data.source?.form === 'authorization-choice').length, 0, mode)
   }
+})
+
+test('等待超时无人应答时按继续深入处理，本步保留工具且不阻塞', async () => {
+  const h = harness({ maxToolCalls: 1, authorizePromptTimeoutMs: 20 }), agent = h.agent(), assembly = { tools: [{ name: 'inspect' }] }
+  h.hang()                                  // 窗口一直开着，用户没有任何响应
+  await h.step(agent, [h.user('分析当前结果')]); h.call(agent)
+  const started = Date.now()
+  const resumed = await h.assemble(agent, assembly)
+  assert.ok(Date.now() - started < 1000, '超时后应很快返回，不长期阻塞')
+  assert.deepEqual(resumed.tools, assembly.tools, '超时默认继续，本步仍保留工具')
+  assert.match(notice(await h.step(agent)), /等待超时且无人应答/)
+  for (let i = 0; i < 25; i++) { assert.equal(h.call(agent), undefined); assert.equal((await h.step(agent)).kind, 'enter') }
+  assert.equal(h.asked.length, 1, '每个预算周期只问一次')
+  assert.equal(agent.session.records.filter(([, data]) => data.source?.form === 'authorization-choice').length, 0, '超时不写入会话事件')
+})
+
+test('超时默认继续只对本次工作生效，新请求重新受预算限制', async () => {
+  const h = harness({ maxToolCalls: 1, authorizePromptTimeoutMs: 20 }), agent = h.agent(), assembly = { tools: [{ name: 'inspect' }] }
+  h.hang()
+  await h.step(agent, [h.user('分析当前结果')]); h.call(agent)
+  assert.deepEqual((await h.assemble(agent, assembly)).tools, assembly.tools)
+  assert.equal(h.call(agent), undefined)
+  // 新任务重新判断：超时不是显式授权，不能继承成会话级无限预算。
+  h.events.get('agent/inbox/inserted')({ agent, message: h.user('另外查看新的对象') })
+  const notice = await h.step(agent, [h.user('另外查看新的对象')])
+  assert.doesNotMatch(notice ? notice.messages.at(-1).content[0].text : '', /授权/)
+  assert.equal(h.call(agent), undefined, '新请求获得自己的完整预算')
+  assert.match(h.call(agent), /预算已用尽/, '新请求只有一次调用额度，未被超时授权放大')
+})
+
+test('超时默认继续不解除单次工具超时', async () => {
+  const h = harness({ maxToolCalls: 1, authorizePromptTimeoutMs: 20, toolTimeoutMs: 5 }), agent = h.agent()
+  h.hang()
+  await h.step(agent); h.call(agent)
+  await h.assemble(agent, { tools: [{ name: 'inspect' }] })
+  const exec = { agent, signal: new AbortController().signal }
+  await h.events.get('tools/execute')(exec, async () => {
+    await new Promise(resolve => exec.signal.addEventListener('abort', resolve, { once: true }))
+    assert.equal(exec.signal.aborted, true, '单次工具超时仍生效')
+  })
+})
+
+test('用户显式选择仍然优先于超时默认值', async () => {
+  const h = harness({ maxToolCalls: 1, authorizePromptTimeoutMs: 20 }), agent = h.agent()
+  h.reply({ answers: [{ id: 'fast-mode-authorization', selected: ['就此交付'] }] })
+  await h.step(agent); h.call(agent)
+  assert.deepEqual((await h.assemble(agent, { tools: [{ name: 'inspect' }] })).tools, [], '显式交付不应被超时默认值覆盖')
+  assert.match(notice(await h.step(agent)), /现在仅回答/)
 })
 
 test('选择框可关闭，且不影响文本授权路径', async () => {

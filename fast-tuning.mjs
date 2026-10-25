@@ -6,11 +6,11 @@ export const inject = ['agentPresets', 'tools']
 /** 选择框的快捷选项文案；自由输入始终保留，用户不必二选一。 */
 export const GRANT_LABEL = '继续深入'
 export const DECLINE_LABEL = '就此交付'
-const dialogQuestions = [{
+const dialogQuestions = timeoutMs => [{
   id: DIALOG_QUESTION_ID,
   header: '取证预算已用尽',
   question: '本轮取证预算已用尽。要继续深入，还是按现有材料交付？也可以直接输入你的要求。',
-  detail: '选择“继续深入”会解除本次工作的取证批次和工具次数限制，完成后再交付；“就此交付”会停止调用工具，只给出已确认结论和未确认疑点。若你另有安排，请在输入框写明，我会按你的文字判断。',
+  detail: `选择“继续深入”会解除本次工作的取证批次和工具次数限制，完成后再交付；“就此交付”会停止调用工具，只给出已确认结论和未确认疑点。若你另有安排，请在输入框写明，我会按你的文字判断。${Math.round(timeoutMs / 1000)} 秒内无任何响应时，视为你已离开，按“继续深入”自动继续。`,
   options: [
     { label: GRANT_LABEL, description: '解除本次工作的取证批次与工具次数预算，继续完成剩余工作。' },
     { label: DECLINE_LABEL, description: '不再调用工具，按现有材料给出结论与未确认疑点。' },
@@ -27,7 +27,8 @@ export function apply(ctx, config = {}) {
   const maxToolCalls = config.maxToolCalls ?? 20
   const toolTimeoutMs = config.toolTimeoutMs ?? 15000
   const authorizePrompt = config.authorizePrompt ?? true
-  const authorizePromptTimeoutMs = config.authorizePromptTimeoutMs ?? 120000
+  // 限时阻塞：窗口打开后最多等这么久。无响应对应“用户离开”，按继续深入处理，不再一直挂着。
+  const authorizePromptTimeoutMs = config.authorizePromptTimeoutMs ?? 10000
   for (const [key, value] of Object.entries({ maxToolRounds, maxToolCalls, toolTimeoutMs, authorizePromptTimeoutMs, ...(maxTokens == null ? {} : { maxTokens }) })) {
     if (!Number.isSafeInteger(value) || value <= 0) throw new RangeError(`${key} 必须为正整数`)
   }
@@ -71,20 +72,30 @@ export function apply(ctx, config = {}) {
     return userAuthorization({}, { source: { kind: 'user' }, content: [{ type: 'text', text: custom }] }).authorized ? 'grant' : 'decline'
   }
 
-  /** 询问用户并等待选择；带独立超时与回合取消信号，用户离开时不会挂住工作流。 */
+  /** 询问用户并等待选择；限时阻塞，超时视为用户离开并按继续深入处理。 */
   const askAuthorization = async (agent, signal) => {
     const service = questionService()
     if (typeof service?.ask !== 'function') return
+    if (signal?.aborted) return
     const controller = new AbortController()
     const forward = () => controller.abort(signal?.reason)
-    if (signal?.aborted) return
     signal?.addEventListener('abort', forward, { once: true })
-    const timer = setTimeout(() => controller.abort(new Error('授权选择超时')), authorizePromptTimeoutMs)
+    const EXPIRED = Symbol('expired')
+    let timer
+    const expired = new Promise(resolve => { timer = setTimeout(() => resolve(EXPIRED), authorizePromptTimeoutMs) })
     try {
-      return choiceOf(await service.ask({ questions: dialogQuestions, agent, signal: controller.signal }))
-    } catch {
-      // 无应答者、取消或超时都退回原有强制回答路径，不虚构用户选择。
-      return
+      // 服务自身的异常与回合取消都返回 undefined，退回原有强制回答路径，不虚构用户选择。
+      const pending = Promise.resolve()
+        .then(() => service.ask({ questions: dialogQuestions(authorizePromptTimeoutMs), agent, signal: controller.signal }))
+        .then(value => ({ value }), () => ({ failed: true }))
+      const outcome = await Promise.race([pending, expired])
+      if (outcome === EXPIRED) {
+        // 无任何响应：不写入会话事件，只在本次工作内存中按“继续深入”处理。
+        controller.abort(new Error('授权选择超时'))
+        return 'default-grant'
+      }
+      if (outcome.failed) return
+      return choiceOf(outcome.value)
     } finally {
       clearTimeout(timer)
       signal?.removeEventListener('abort', forward)
@@ -146,6 +157,16 @@ export function apply(ctx, config = {}) {
         state.justAuthorized = true
         return assembly
       }
+      if (choice === 'default-grant') {
+        // 超时无人应答：按继续深入处理，但不落盘、不标记为显式授权，
+        // 因此只解除本次工作的预算，不会变成对后续新请求的永久授权。
+        state.authorized = true
+        state.defaultAuthorized = true
+        state.finalStarted = false
+        state.timedOut = false
+        state.justAuthorized = true
+        return assembly
+      }
       if (choice === 'decline') {
         appendChoice(context.scope, 'decline')
         authorizations.set(context.scope, { ...authorizationOf(context.scope), authorized: false, pending: false })
@@ -165,7 +186,7 @@ export function apply(ctx, config = {}) {
       let authorization = authorizationOf(agent)
       for (const message of users) authorization = userAuthorization(authorization, message)
       authorizations.set(agent, authorization)
-      state = { agent, authorized: Boolean(authorization.authorized), rounds: 0, calls: 0, step: 0, lastToolStep: null, finalStarted: false, prompted: false, timedOut: false, justAuthorized: false }
+      state = { agent, authorized: Boolean(authorization.authorized), rounds: 0, calls: 0, step: 0, lastToolStep: null, finalStarted: false, prompted: false, timedOut: false, justAuthorized: false, defaultAuthorized: false }
       states.set(agent, state)
       sessions.set(agent.session, state)
     }
@@ -190,7 +211,7 @@ export function apply(ctx, config = {}) {
     const justAuthorized = state.justAuthorized
     state.justAuthorized = false
     const text = mode === 'full' || state.authorized
-      ? `${mode === 'full' ? '当前为完整执行模式。' : justAuthorized ? '用户已通过选择框授权当前工作。' : '用户已明确授权当前工作。'}取证批次和工具次数预算不再限制本次工作。完成授权范围内的实现、深入调查和必要验证，不扩大授权范围；单次工具超时等其他设置保持不变。`
+      ? `${mode === 'full' ? '当前为完整执行模式。' : state.defaultAuthorized ? '授权选择框已等待超时且无人应答，按继续深入处理。' : justAuthorized ? '用户已通过选择框授权当前工作。' : '用户已明确授权当前工作。'}取证批次和工具次数预算不再限制本次工作。完成授权范围内的实现、深入调查和必要验证，不扩大授权范围；单次工具超时等其他设置保持不变。`
       : final
         ? '本轮取证已结束，工具不可用。现在仅回答：已确认结论、关键依据、未知疑点和必要建议。不再请求工具，不补齐全部未知，不宣称已完成未验证事项。需要深入取证的疑点留给用户决定是否继续。'
         : `当前为快速模式：默认先返回已确认结论。优先取得核心材料并合并独立操作；证据有限就收窄措辞，不为消除疑点递归调查。最多 ${maxToolRounds} 个取证批次、${maxToolCalls} 次工具调用；这是上限，不是目标，能回答就提前交付。未知疑点及继续调查的价值简短列出，等待用户确认。需要创建产物时先写最小可运行版本；已有内容先读取。`

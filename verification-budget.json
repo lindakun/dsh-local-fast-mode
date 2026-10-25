@@ -20,7 +20,7 @@
         2,
         0
       ],
-      "elapsedMs": 608,
+      "elapsedMs": 600,
       "passed": true
     },
     {
@@ -31,7 +31,7 @@
         2,
         0
       ],
-      "elapsedMs": 472,
+      "elapsedMs": 463,
       "passed": true
     },
     {
@@ -43,7 +43,7 @@
         2,
         0
       ],
-      "elapsedMs": 478,
+      "elapsedMs": 470,
       "passed": true
     },
     {
@@ -54,7 +54,7 @@
         2,
         0
       ],
-      "elapsedMs": 503,
+      "elapsedMs": 474,
       "passed": true
     },
     {
@@ -65,7 +65,7 @@
         3,
         0
       ],
-      "elapsedMs": 580,
+      "elapsedMs": 562,
       "passed": true
     },
     {
@@ -76,7 +76,7 @@
         6,
         0
       ],
-      "elapsedMs": 500,
+      "elapsedMs": 470,
       "passed": true
     },
     {
@@ -92,7 +92,7 @@
         2,
         2
       ],
-      "elapsedMs": 548,
+      "elapsedMs": 530,
       "passed": true
     },
     {
@@ -108,7 +108,7 @@
         2,
         2
       ],
-      "elapsedMs": 555,
+      "elapsedMs": 528,
       "passed": true
     },
     {
@@ -119,7 +119,7 @@
         2,
         0
       ],
-      "elapsedMs": 471,
+      "elapsedMs": 459,
       "passed": true
     },
     {
@@ -130,7 +130,7 @@
         2,
         0
       ],
-      "elapsedMs": 478,
+      "elapsedMs": 465,
       "passed": true
     },
     {
@@ -166,7 +166,7 @@
         2,
         0
       ],
-      "elapsedMs": 472,
+      "elapsedMs": 458,
       "passed": true
     },
     {
@@ -182,7 +182,7 @@
         2,
         2
       ],
-      "elapsedMs": 556,
+      "elapsedMs": 537,
       "passed": true
     },
     {
@@ -193,7 +193,7 @@
         2,
         0
       ],
-      "elapsedMs": 493,
+      "elapsedMs": 463,
       "passed": true
     },
     {
@@ -209,7 +209,7 @@
         2,
         2
       ],
-      "elapsedMs": 563,
+      "elapsedMs": 544,
       "passed": true
     },
     {
@@ -220,7 +220,23 @@
         2,
         0
       ],
-      "elapsedMs": 475,
+      "elapsedMs": 458,
+      "passed": true
+    },
+    {
+      "id": "dialog-timeout-continue",
+      "toolBodies": 6,
+      "modelRequests": 7,
+      "requestToolCounts": [
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "elapsedMs": 900,
       "passed": true
     }
   ]

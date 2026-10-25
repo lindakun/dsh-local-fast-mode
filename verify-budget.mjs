@@ -48,7 +48,7 @@ export const inject=['llm','tools'];
 export function apply(ctx) {
   ctx.llm.registerAdapter(['budget-test'],new Adapter());
   const asked=[];
-  const userQuestions = scenario.dialog ? { async ask(request){ record({kind:'ask', questions:request.questions.map(q=>q.id)}); asked.push(request); await new Promise(r=>setTimeout(r,10)); const choice=scenario.dialog; return {answers:[{id:request.questions[0].id, selected: choice==='grant'?['继续深入']:choice==='decline'?['就此交付']:[], ...(choice==='custom'?{custom: scenario.customText}:{}) }]}; } } : undefined;
+  const userQuestions = scenario.dialog ? { async ask(request){ record({kind:'ask', questions:request.questions.map(q=>q.id)}); asked.push(request); await new Promise(r=>setTimeout(r,10)); const choice=scenario.dialog; return {answers:[{id:request.questions[0].id, selected: choice==='grant'?['继续深入']:choice==='decline'?['就此交付']:[], ...(choice==='custom'?{custom: scenario.customText}:{}) }]}; } } : scenario.dialogSilent ? { async ask(request){ record({kind:'ask', questions:request.questions.map(q=>q.id)}); asked.push(request); return new Promise(()=>{}) } } : undefined;
   tuning({agentPresets:{composedPreset:()=>scenario.full?'fast-full':'fast'},tools:ctx.tools,on:ctx.on.bind(ctx),get:name=>name==='userQuestions'?userQuestions:undefined},scenario.config||{});
   ctx.on('tools/execute',async(exec,next)=>{
     record({kind:'dispatch',name:exec.name});
@@ -81,6 +81,7 @@ const cases = [
   { id: 'dialog-decline', dialog: 'decline', config: { maxToolRounds: 1, maxToolCalls: 1 }, bodies: 1, expectAsk: 1 },
   { id: 'dialog-custom-grant', dialog: 'custom', customText: '继续深入排查，把根因找清楚', modelToolRounds: 6, config: { maxToolRounds: 1, maxToolCalls: 1 }, bodies: 6, expectAsk: 1, expectAuthorized: true },
   { id: 'dialog-absent', config: { maxToolRounds: 1, maxToolCalls: 1 }, bodies: 1, expectAsk: 0 },
+  { id: 'dialog-timeout-continue', dialogSilent: true, modelToolRounds: 6, config: { maxToolRounds: 1, maxToolCalls: 1, authorizePromptTimeoutMs: 300 }, bodies: 6, expectAsk: 1, expectAuthorized: true },
 ]
 const runs = []
 for (const scenario of cases) {
