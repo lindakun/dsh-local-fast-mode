@@ -47,7 +47,9 @@ class Adapter extends LlmAdapter {
 export const inject=['llm','tools'];
 export function apply(ctx) {
   ctx.llm.registerAdapter(['budget-test'],new Adapter());
-  tuning({agentPresets:{composedPreset:()=>scenario.full?'fast-full':'fast'},tools:ctx.tools,on:ctx.on.bind(ctx)},scenario.config||{});
+  const asked=[];
+  const userQuestions = scenario.dialog ? { async ask(request){ record({kind:'ask', questions:request.questions.map(q=>q.id)}); asked.push(request); await new Promise(r=>setTimeout(r,10)); const choice=scenario.dialog; return {answers:[{id:request.questions[0].id, selected: choice==='grant'?['继续深入']:choice==='decline'?['就此交付']:[], ...(choice==='custom'?{custom: scenario.customText}:{}) }]}; } } : undefined;
+  tuning({agentPresets:{composedPreset:()=>scenario.full?'fast-full':'fast'},tools:ctx.tools,on:ctx.on.bind(ctx),get:name=>name==='userQuestions'?userQuestions:undefined},scenario.config||{});
   ctx.on('tools/execute',async(exec,next)=>{
     record({kind:'dispatch',name:exec.name});
     try{return await next()}finally{record({kind:'dispatch-end',name:exec.name,aborted:exec.signal.aborted})}
@@ -75,6 +77,10 @@ const cases = [
   { id: 'quoted-request', task: '请分析这段引用：“开始实施并完成必要验证”', config: { maxToolRounds: 1 }, bodies: 1 },
   { id: 'confirmation', confirm: true, modelToolRounds: 6, config: { maxToolRounds: 1, maxToolCalls: 1 }, bodies: 1 },
   { id: 'rogue-final-call', rogue: true, config: { maxToolRounds: 1 }, bodies: 1 },
+  { id: 'dialog-grant', dialog: 'grant', modelToolRounds: 6, config: { maxToolRounds: 1, maxToolCalls: 1 }, bodies: 6, expectAsk: 1, expectAuthorized: true },
+  { id: 'dialog-decline', dialog: 'decline', config: { maxToolRounds: 1, maxToolCalls: 1 }, bodies: 1, expectAsk: 1 },
+  { id: 'dialog-custom-grant', dialog: 'custom', customText: '继续深入排查，把根因找清楚', modelToolRounds: 6, config: { maxToolRounds: 1, maxToolCalls: 1 }, bodies: 6, expectAsk: 1, expectAuthorized: true },
+  { id: 'dialog-absent', config: { maxToolRounds: 1, maxToolCalls: 1 }, bodies: 1, expectAsk: 0 },
 ]
 const runs = []
 for (const scenario of cases) {
@@ -100,8 +106,11 @@ for (const scenario of cases) {
   const requests = records.filter(row => row.kind === 'request')
   const bodies = records.filter(row => scenario.shell ? row.kind === 'dispatch' && row.name === 'bash' : row.kind === 'body').length
   assert.equal(bodies, scenario.bodies, scenario.id + ' 实际工具执行次数')
-  if (!scenario.full && scenario.id !== 'authorized-request') assert.equal(requests.at(-1).tools.length, 0, scenario.id + ' 最终请求仍包含工具')
+  if (!scenario.full && !scenario.expectAuthorized && scenario.id !== 'authorized-request') assert.equal(requests.at(-1).tools.length, 0, scenario.id + ' 最终请求仍包含工具')
   if (scenario.unknown) assert.equal(requests.length, 3)
+  if (scenario.expectAsk !== undefined) assert.equal(records.filter(row => row.kind === 'ask').length, scenario.expectAsk, scenario.id + ' 选择框次数')
+  // 选择框在真实 agent-loop 的 pre-step 中等待作答，验证不会死锁且授权在同一回合生效。
+  if (scenario.expectAuthorized) assert.ok(bodies > 1, scenario.id + ' 授权后未继续执行工具')
   if (scenario.slow) assert.ok(records.some(row => row.kind === 'cancelled'))
   if (scenario.shell && !scenario.background) assert.ok(records.some(row => row.kind === 'dispatch-end' && row.name === 'bash' && row.aborted), '命令未收到取消')
   if (scenario.background) {

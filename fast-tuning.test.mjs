@@ -5,20 +5,27 @@ import { apply, inject } from './fast-tuning.mjs'
 function harness(config = {}) {
   const events = new Map()
   let guard
+  const asked = []
+  let answer
   apply({
     agentPresets: { composedPreset: agentCtx => agentCtx.preset },
     tools: { guard(callback) { guard = callback } },
     on(event, callback) { events.set(event, callback) },
+    get(name) {
+      if (name !== 'userQuestions' || config.userQuestions === false) return
+      return { async ask(request) { asked.push(request); return answer } }
+    },
   }, config)
   const agent = (preset = 'fast', header = preset) => ({
     ctx: { preset },
-    session: { header: Object.freeze({ agentPreset: header }), records: [], append(...args) { this.records.push(args) } },
+    session: { header: Object.freeze({ agentPreset: header }), records: [], log: [], append(...args) { this.records.push(args) } },
   })
   const user = text => ({ source: { kind: 'user' }, content: [{ type: 'text', text }] })
   const decision = { kind: 'enter', messages: [] }
   return {
-    events, agent, user, decision,
-    step: (subject, messages = [], step = 1) => events.get('agent/pre-step')({ agent: subject, messages, turn: 1, step }, async () => decision),
+    events, agent, user, decision, asked,
+    reply(value) { answer = value },
+    step: (subject, messages = [], step = 1) => events.get('agent/pre-step')({ agent: subject, messages, turn: 1, step, signal: new AbortController().signal }, async () => decision),
     call: (subject, name = 'inspect', args = {}) => guard({ agent: subject, name, arguments: args }),
     request: (subject, selection) => events.get('agent/request')({ agent: subject }, async () => selection),
     assemble: (subject, assembly) => events.get('system-prompt/assemble')(assembly, { scope: subject }, async () => assembly),
@@ -254,4 +261,75 @@ test('授权不解除单次执行超时，超时后不强制截断已授权工�
   await h.events.get('tools/execute')(exec, async () => new Promise(resolve => exec.signal.addEventListener('abort', resolve, { once: true })))
   assert.equal(await h.step(agent), h.decision)
   assert.equal(h.call(agent), undefined)
+})
+
+test('预算耗尽时弹出选择框，选“继续深入”保留工具并解除本次预算', async () => {
+  const h = harness({ maxToolCalls: 1 }), agent = h.agent(), assembly = { tools: [{ name: 'inspect' }] }
+  h.reply({ answers: [{ id: 'fast-mode-authorization', selected: ['继续深入'] }] })
+  await h.step(agent, [h.user('分析当前结果')]); h.call(agent)
+  const resumed = await h.assemble(agent, assembly)
+  assert.equal(h.asked.length, 1)
+  assert.equal(h.asked[0].questions[0].options.length, 2)
+  assert.ok(h.asked[0].agent === agent)
+  assert.deepEqual(resumed.tools, assembly.tools, '授权后本步仍保留工具')
+  assert.match(notice(await h.step(agent)), /用户已通过选择框授权/)
+  for (let i = 0; i < 25; i++) { assert.equal(h.call(agent), undefined); assert.equal((await h.step(agent)).kind, 'enter') }
+  assert.equal((await h.assemble(agent, assembly)).tools.length, 1)
+  assert.equal(h.asked.length, 1, '每个预算周期只问一次')
+  assert.equal(agent.session.records.filter(([, data]) => data.source?.form === 'authorization-choice').length, 1)
+})
+
+test('选择“就此交付”停止工具并进入强制回答，选择结果可重放', async () => {
+  const h = harness({ maxToolCalls: 1 }), agent = h.agent()
+  h.reply({ answers: [{ id: 'fast-mode-authorization', selected: ['就此交付'] }] })
+  await h.step(agent); h.call(agent)
+  assert.match(notice(await h.step(agent)), /现在仅回答/)
+  assert.match(h.call(agent), /预算已用尽/)
+  // 交付选择不属于授权，恢复会话后同任务仍受预算限制。
+  const restored = h.agent()
+  restored.session.log = agent.session.records.map(([, data]) => ({ type: 'user/message', data }))
+  await h.step(restored, [h.user('新任务')])
+  assert.equal(h.call(restored), undefined)
+  assert.match(h.call(restored), /预算已用尽/)
+})
+
+test('自由输入作为兜底：授权语义解除预算，无关文字按交付处理', async () => {
+  const assembly = { tools: [{ name: 'inspect' }] }
+  const grant = harness({ maxToolCalls: 1 }), a = grant.agent()
+  grant.reply({ answers: [{ id: 'fast-mode-authorization', selected: [], custom: '继续深入排查，把根因找出来' }] })
+  await grant.step(a); grant.call(a)
+  assert.deepEqual((await grant.assemble(a, assembly)).tools, assembly.tools)
+  assert.match(notice(await grant.step(a)), /用户已通过选择框授权/)
+  assert.equal(grant.call(a), undefined)
+
+  const decline = harness({ maxToolCalls: 1 }), b = decline.agent()
+  decline.reply({ answers: [{ id: 'fast-mode-authorization', selected: [], custom: '先这样吧' }] })
+  await decline.step(b); decline.call(b)
+  assert.deepEqual((await decline.assemble(b, assembly)).tools, [])
+  assert.match(notice(await decline.step(b)), /现在仅回答/)
+  assert.match(decline.call(b), /预算已用尽/)
+})
+
+test('无应答者、抛错、超时与取消都退回原有强制回答，不虚构选择', async () => {
+  for (const mode of ['absent', 'throw', 'timeout']) {
+    const h = harness({ maxToolCalls: 1, authorizePromptTimeoutMs: 20, userQuestions: mode !== 'absent' }), agent = h.agent()
+    if (mode === 'throw') h.asked.push = () => { throw new Error('无应答者') }
+    if (mode === 'timeout') h.reply(undefined)
+    await h.step(agent); h.call(agent)
+    assert.deepEqual((await h.assemble(agent, { tools: [{ name: 'inspect' }] })).tools, [], mode)
+    const answer = await h.step(agent)
+    assert.match(notice(answer), /现在仅回答/, mode)
+    assert.match(h.call(agent), /预算已用尽/, mode)
+    assert.equal(agent.session.records.filter(([, data]) => data.source?.form === 'authorization-choice').length, 0, mode)
+  }
+})
+
+test('选择框可关闭，且不影响文本授权路径', async () => {
+  const h = harness({ maxToolCalls: 1, authorizePrompt: false }), agent = h.agent()
+  await h.step(agent); h.call(agent)
+  assert.deepEqual((await h.assemble(agent, { tools: [{ name: 'inspect' }] })).tools, [])
+  assert.equal(h.asked.length, 0)
+  assert.match(notice(await h.step(agent)), /现在仅回答/)
+  const grant = harness({ maxToolCalls: 1 }), g = grant.agent()
+  assert.match(notice(await grant.step(g, [grant.user('同意授权')])), /用户已明确授权/)
 })

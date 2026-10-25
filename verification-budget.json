@@ -20,7 +20,7 @@
         2,
         0
       ],
-      "elapsedMs": 595,
+      "elapsedMs": 608,
       "passed": true
     },
     {
@@ -31,7 +31,7 @@
         2,
         0
       ],
-      "elapsedMs": 456,
+      "elapsedMs": 472,
       "passed": true
     },
     {
@@ -43,7 +43,7 @@
         2,
         0
       ],
-      "elapsedMs": 458,
+      "elapsedMs": 478,
       "passed": true
     },
     {
@@ -54,7 +54,7 @@
         2,
         0
       ],
-      "elapsedMs": 469,
+      "elapsedMs": 503,
       "passed": true
     },
     {
@@ -65,7 +65,7 @@
         3,
         0
       ],
-      "elapsedMs": 556,
+      "elapsedMs": 580,
       "passed": true
     },
     {
@@ -76,7 +76,7 @@
         6,
         0
       ],
-      "elapsedMs": 470,
+      "elapsedMs": 500,
       "passed": true
     },
     {
@@ -92,7 +92,7 @@
         2,
         2
       ],
-      "elapsedMs": 523,
+      "elapsedMs": 548,
       "passed": true
     },
     {
@@ -108,7 +108,7 @@
         2,
         2
       ],
-      "elapsedMs": 545,
+      "elapsedMs": 555,
       "passed": true
     },
     {
@@ -119,7 +119,7 @@
         2,
         0
       ],
-      "elapsedMs": 461,
+      "elapsedMs": 471,
       "passed": true
     },
     {
@@ -130,7 +130,7 @@
         2,
         0
       ],
-      "elapsedMs": 449,
+      "elapsedMs": 478,
       "passed": true
     },
     {
@@ -166,7 +166,61 @@
         2,
         0
       ],
-      "elapsedMs": 453,
+      "elapsedMs": 472,
+      "passed": true
+    },
+    {
+      "id": "dialog-grant",
+      "toolBodies": 6,
+      "modelRequests": 7,
+      "requestToolCounts": [
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "elapsedMs": 556,
+      "passed": true
+    },
+    {
+      "id": "dialog-decline",
+      "toolBodies": 1,
+      "modelRequests": 2,
+      "requestToolCounts": [
+        2,
+        0
+      ],
+      "elapsedMs": 493,
+      "passed": true
+    },
+    {
+      "id": "dialog-custom-grant",
+      "toolBodies": 6,
+      "modelRequests": 7,
+      "requestToolCounts": [
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "elapsedMs": 563,
+      "passed": true
+    },
+    {
+      "id": "dialog-absent",
+      "toolBodies": 1,
+      "modelRequests": 2,
+      "requestToolCounts": [
+        2,
+        0
+      ],
+      "elapsedMs": 475,
       "passed": true
     }
   ]

@@ -61,6 +61,7 @@
             config:
               preset: fast
               reasoningEffort: low
+              authorizePromptTimeoutMs: 120000
           - id: compaction
             name: cordis:group
             group: true
