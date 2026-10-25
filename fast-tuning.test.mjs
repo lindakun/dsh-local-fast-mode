@@ -166,11 +166,14 @@ test('工具失败恢复信号，用户取消保持可传播', async () => {
   assert.equal(exec.signal, original)
 })
 
-test('后台启动被拒绝且计数，完整执行不受该限制', async () => {
-  const h = harness({ maxToolCalls: 1 }), agent = h.agent()
-  await h.step(agent)
-  assert.match(h.call(agent, 'bash', { run_in_background: true }), /不启动后台/)
-  assert.match(h.call(agent), /预算已用尽/)
+test('快速模式允许显式后台启动，仍计入普通调用预算', async () => {
+  const h = harness({ maxToolCalls: 1 })
+  for (const name of ['bash', 'pwsh']) {
+    const agent = h.agent()
+    await h.step(agent)
+    assert.equal(h.call(agent, name, { run_in_background: true }), undefined)
+    assert.match(h.call(agent), /预算已用尽/)
+  }
   assert.equal(h.call(h.agent('fast-full'), 'bash', { run_in_background: true }), undefined)
 })
 

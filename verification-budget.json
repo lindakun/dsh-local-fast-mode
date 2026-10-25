@@ -15,7 +15,7 @@
         2,
         0
       ],
-      "elapsedMs": 476,
+      "elapsedMs": 468,
       "passed": true
     },
     {
@@ -26,7 +26,7 @@
         2,
         0
       ],
-      "elapsedMs": 429,
+      "elapsedMs": 424,
       "passed": true
     },
     {
@@ -38,7 +38,7 @@
         2,
         0
       ],
-      "elapsedMs": 443,
+      "elapsedMs": 444,
       "passed": true
     },
     {
@@ -49,7 +49,7 @@
         2,
         0
       ],
-      "elapsedMs": 428,
+      "elapsedMs": 444,
       "passed": true
     },
     {
@@ -60,7 +60,18 @@
         3,
         0
       ],
-      "elapsedMs": 517,
+      "elapsedMs": 527,
+      "passed": true
+    },
+    {
+      "id": "shell-background",
+      "toolBodies": 1,
+      "modelRequests": 2,
+      "requestToolCounts": [
+        6,
+        0
+      ],
+      "elapsedMs": 423,
       "passed": true
     },
     {
@@ -76,7 +87,7 @@
         2,
         2
       ],
-      "elapsedMs": 493,
+      "elapsedMs": 476,
       "passed": true
     },
     {
@@ -87,7 +98,7 @@
         2,
         0
       ],
-      "elapsedMs": 409,
+      "elapsedMs": 404,
       "passed": true
     }
   ]

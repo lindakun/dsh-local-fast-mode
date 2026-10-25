@@ -1,6 +1,6 @@
 {
   "name": "dsh-local-fast-mode",
-  "version": "1.6.0",
+  "version": "1.6.1",
   "private": true,
   "type": "module",
   "description": "缓解 DSH 使用 deepseek-v4.1-flash-1017 时的雷霆思考、过度调查与冗余工具调用",

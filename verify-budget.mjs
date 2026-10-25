@@ -32,7 +32,7 @@ class Adapter extends LlmAdapter {
     if(wantsTool) {
       for(let i=0;i<(scenario.batch||1);i++) {
         const name=scenario.unknown?'nonexistent':scenario.shell?'bash':'inspect';
-        const args=scenario.shell?{description:'验证本地取消',command:'sleep 2'}:{};
+        const args=scenario.shell?{description:'验证本地任务执行',command:'sleep 2',...(scenario.background?{run_in_background:true}:{})}:{};
         yield {type:'block-start',index:i,blockType:'tool-call'};
         yield {type:'block-end',index:i,block:{type:'tool-call',id:'call_'+this.count+'_'+i,name,arguments:JSON.stringify(args)}};
       }
@@ -69,6 +69,7 @@ const cases = [
   { id: 'unknown-tool-cap', unknown: true, config: { maxToolRounds: 2 }, bodies: 0 },
   { id: 'cooperative-timeout', slow: true, config: { toolTimeoutMs: 20 }, bodies: 1 },
   { id: 'shell-cancellation', shell: true, config: { toolTimeoutMs: 100 }, bodies: 1 },
+  { id: 'shell-background', shell: true, background: true, config: { maxToolCalls: 1 }, bodies: 1 },
   { id: 'full-mode', full: true, config: { maxToolRounds: 1, maxToolCalls: 1 }, bodies: 6 },
   { id: 'rogue-final-call', rogue: true, config: { maxToolRounds: 1 }, bodies: 1 },
 ]
@@ -76,7 +77,7 @@ const runs = []
 for (const scenario of cases) {
   const patch = join(temp, scenario.id + '.yml')
   writeFileSync(patch, YAML.stringify([
-    ...disabled.filter(id => !(scenario.shell && id === 'tool-bash')).map(id => ({ id, disabled: true })),
+    ...disabled.filter(id => !(scenario.shell && id === 'tool-bash') && !(scenario.background && id === 'tool-jobs')).map(id => ({ id, disabled: true })),
     ...(scenario.shell ? [{ id: 'tool-bash', config: { promoteOnTimeout: false } }] : []),
     { id: 'agent-default-model', config: { provider: 'budget-test', model: 'fixture' } },
     { insert: [{ id: 'fixture', name: fixture }] },
@@ -99,7 +100,11 @@ for (const scenario of cases) {
   if (!scenario.full) assert.equal(requests.at(-1).tools.length, 0, scenario.id + ' 最终请求仍包含工具')
   if (scenario.unknown) assert.equal(requests.length, 3)
   if (scenario.slow) assert.ok(records.some(row => row.kind === 'cancelled'))
-  if (scenario.shell) assert.ok(records.some(row => row.kind === 'dispatch-end' && row.name === 'bash' && row.aborted), '命令未收到取消')
+  if (scenario.shell && !scenario.background) assert.ok(records.some(row => row.kind === 'dispatch-end' && row.name === 'bash' && row.aborted), '命令未收到取消')
+  if (scenario.background) {
+    const results = events.filter(row => row.type === 'tool_result')
+    assert.ok(results.some(row => row.status === 'completed' && /background job/i.test(row.result)), '后台任务未成功返回作业信息')
+  }
   const final = events.findLast(row => row.type === 'final')?.text
   assert.ok(final, scenario.id + ' 未交付回答')
   if (scenario.rogue) assert.match(final, /模型未能完成最终回答/)

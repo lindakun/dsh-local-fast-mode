@@ -94,9 +94,6 @@ export function apply(ctx, config = {}) {
     // 在任何异步等待之前占用额度，避免同批并发调用突破上限；失败尝试也计数。
     state.calls++
     if (state.lastToolStep !== state.step) { state.rounds++; state.lastToolStep = state.step }
-    if (['bash', 'pwsh'].includes(exec.name) && exec.arguments?.run_in_background === true) {
-      return '快速模式不启动后台工作，请先交付已有结论；需要长期执行时选择完整执行模式。'
-    }
   })
 
   ctx.on('tools/execute', async (exec, next) => {
