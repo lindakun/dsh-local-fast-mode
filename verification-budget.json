@@ -1,0 +1,94 @@
+{
+  "date": "2026-10-25",
+  "method": "DSH headless 真实组装、工具调度与执行 guard；确定性测试适配器，不调用供应商或真实设备。预设服务使用替身。",
+  "cliVersion": "0.2.0-rc.2",
+  "runs": [
+    {
+      "id": "default-round-cap",
+      "toolBodies": 5,
+      "modelRequests": 6,
+      "requestToolCounts": [
+        2,
+        2,
+        2,
+        2,
+        2,
+        0
+      ],
+      "elapsedMs": 476,
+      "passed": true
+    },
+    {
+      "id": "parallel-call-cap",
+      "toolBodies": 3,
+      "modelRequests": 2,
+      "requestToolCounts": [
+        2,
+        0
+      ],
+      "elapsedMs": 429,
+      "passed": true
+    },
+    {
+      "id": "unknown-tool-cap",
+      "toolBodies": 0,
+      "modelRequests": 3,
+      "requestToolCounts": [
+        2,
+        2,
+        0
+      ],
+      "elapsedMs": 443,
+      "passed": true
+    },
+    {
+      "id": "cooperative-timeout",
+      "toolBodies": 1,
+      "modelRequests": 2,
+      "requestToolCounts": [
+        2,
+        0
+      ],
+      "elapsedMs": 428,
+      "passed": true
+    },
+    {
+      "id": "shell-cancellation",
+      "toolBodies": 1,
+      "modelRequests": 2,
+      "requestToolCounts": [
+        3,
+        0
+      ],
+      "elapsedMs": 517,
+      "passed": true
+    },
+    {
+      "id": "full-mode",
+      "toolBodies": 6,
+      "modelRequests": 7,
+      "requestToolCounts": [
+        2,
+        2,
+        2,
+        2,
+        2,
+        2,
+        2
+      ],
+      "elapsedMs": 493,
+      "passed": true
+    },
+    {
+      "id": "rogue-final-call",
+      "toolBodies": 1,
+      "modelRequests": 2,
+      "requestToolCounts": [
+        2,
+        0
+      ],
+      "elapsedMs": 409,
+      "passed": true
+    }
+  ]
+}

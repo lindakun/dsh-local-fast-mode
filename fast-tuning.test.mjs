@@ -2,179 +2,205 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { apply, inject } from './fast-tuning.mjs'
 
-function context(on) {
-  return { agentPresets: { composedPreset: agentCtx => agentCtx.preset }, on }
-}
-
-function listener() {
-  let request
-  apply(context((event, callback) => {
-    if (event === 'agent/request') request = callback
-  }))
-  return request
-}
-
-const fast = { agent: { ctx: { preset: 'fast' }, session: { header: { agentPreset: 'fast' } } } }
-
-test('显式选择的 off、low、high、max 均不被覆盖', async () => {
-  const request = listener()
-  for (const reasoningEffort of ['off', 'low', 'high', 'max']) {
-    const selection = { provider: 'example', model: 'example', reasoningEffort }
-    const result = await request(fast, async () => selection)
-    assert.equal(result.reasoningEffort, reasoningEffort)
-    assert.equal(result.provider, selection.provider)
-    assert.equal(result.maxTokens, undefined)
-  }
-})
-
-test('快速模式未选择档位时才补 low，其他请求参数保留', async () => {
-  assert.deepEqual(await listener()(fast, async () => ({ maxTokens: 123 })), {
-    maxTokens: 123, reasoningEffort: 'low',
+function harness(config = {}) {
+  const events = new Map()
+  let guard
+  apply({
+    agentPresets: { composedPreset: agentCtx => agentCtx.preset },
+    tools: { guard(callback) { guard = callback } },
+    on(event, callback) { events.set(event, callback) },
+  }, config)
+  const agent = (preset = 'fast', header = preset) => ({
+    ctx: { preset },
+    session: { header: Object.freeze({ agentPreset: header }), records: [], append(...args) { this.records.push(args) } },
   })
-})
-
-test('其他预设和缺少 agent 的请求不受影响', async () => {
-  const request = listener()
-  const selection = { model: 'example' }
-  for (const payload of [{}, { agent: { ctx: { preset: 'standard' }, session: { header: { agentPreset: 'standard' } } } }]) {
-    assert.equal(await request(payload, async () => selection), selection)
-  }
-})
-
-test('上游请求错误保持原样，避免掩盖失败', async () => {
-  const failure = new Error('上游请求失败')
-  await assert.rejects(listener()(fast, async () => { throw failure }), error => error === failure)
-})
-
-test('首步执行提醒，后续每步核对交付，新用户回合重置', async () => {
-  let preStep
-  apply(context((event, callback) => { if (event === 'agent/pre-step') preStep = callback }))
-  const agent = fast.agent
+  const user = text => ({ source: { kind: 'user' }, content: [{ type: 'text', text }] })
   const decision = { kind: 'enter', messages: [] }
-  const user = { source: { kind: 'user' } }
-  const first = await preStep({ agent, messages: [user] }, async () => decision)
-  assert.match(first.messages[0].content[0].text, /最小可运行版本/)
-  const second = await preStep({ agent, messages: [] }, async () => decision)
-  assert.match(second.messages[0].content[0].text, /1 个模型步骤/)
-  const third = await preStep({ agent, messages: [] }, async () => decision)
-  assert.equal(third.kind, 'enter')
-  assert.equal(third.messages[0].source.kind, 'fast-mode-budget')
-  assert.match(third.messages[0].content[0].text, /2 个模型步骤/)
-  const reset = await preStep({ agent, messages: [user] }, async () => decision)
-  assert.match(reset.messages[0].content[0].text, /快速模式执行提醒/)
+  return {
+    events, agent, user, decision,
+    step: (subject, messages = [], step = 1) => events.get('agent/pre-step')({ agent: subject, messages, turn: 1, step }, async () => decision),
+    call: (subject, name = 'inspect', args = {}) => guard({ agent: subject, name, arguments: args }),
+    request: (subject, selection) => events.get('agent/request')({ agent: subject }, async () => selection),
+    assemble: (subject, assembly) => events.get('system-prompt/assemble')(assembly, { scope: subject }, async () => assembly),
+  }
+}
+const notice = result => result.messages.at(-1).content[0].text
+
+test('显式档位与输出预算保留，默认只补 low', async () => {
+  const h = harness(), agent = h.agent()
+  for (const reasoningEffort of ['off', 'low', 'high', 'max']) {
+    for (const maxTokens of [1024, 32768]) {
+      const input = { provider: 'example', model: 'example', reasoningEffort, maxTokens }
+      assert.deepEqual(await h.request(agent, input), input)
+    }
+  }
+  assert.deepEqual(await h.request(agent, { model: 'example' }), { model: 'example', reasoningEffort: 'low' })
 })
 
-test('默认不加未经通道验证的输出上限，保留用户显式预算', async () => {
-  const request = listener()
-  for (const maxTokens of [1024, 32768]) {
-    const result = await request(fast, async () => ({ maxTokens, reasoningEffort: 'high' }))
-    assert.deepEqual(result, { maxTokens, reasoningEffort: 'high' })
+test('可选 maxTokens 只补缺省值，配置必须为正整数', async () => {
+  const h = harness({ maxTokens: 8192 }), agent = h.agent()
+  assert.equal((await h.request(agent, {})).maxTokens, 8192)
+  assert.equal((await h.request(agent, { maxTokens: 1024 })).maxTokens, 1024)
+  for (const key of ['maxTokens', 'maxToolRounds', 'maxToolCalls', 'toolTimeoutMs']) {
+    for (const value of [0, -1, 1.5, NaN, '10']) assert.throws(() => harness({ [key]: value }), RangeError)
   }
-  assert.equal((await request(fast, async () => ({}))).maxTokens, undefined)
+  assert.throws(() => harness({ fullPreset: 'fast' }), RangeError)
 })
 
-test('可以调整缺省输出预算，非法预算在加载时拒绝', async () => {
-  let request
-  apply(context((event, callback) => { if (event === 'agent/request') request = callback }), { maxTokens: 8192 })
-  assert.equal((await request(fast, async () => ({}))).maxTokens, 8192)
-  for (const maxTokens of [0, -1, 1.5, NaN, '8192']) {
-    assert.throws(() => apply({ on() {} }, { maxTokens }), /maxTokens/)
-  }
+test('其他预设和缺少 agent 不受影响，上游错误保持原样', async () => {
+  const h = harness(), input = { model: 'example' }
+  for (const agent of [undefined, h.agent('standard')]) assert.equal(await h.request(agent, input), input)
+  const failure = new Error('上游失败')
+  await assert.rejects(h.events.get('agent/request')({ agent: h.agent() }, async () => { throw failure }), error => error === failure)
 })
 
-test('收尾提醒不改写被拒绝的步骤和其他预设', async () => {
-  let preStep
-  apply(context((event, callback) => { if (event === 'agent/pre-step') preStep = callback }))
-  const rejection = { kind: 'reject' }
-  assert.equal(await preStep({ agent: fast.agent, messages: [] }, async () => rejection), rejection)
-  const decision = { kind: 'enter', messages: [] }
-  const agent = { ctx: { preset: 'standard' }, session: { header: { agentPreset: 'standard' } } }
-  for (let i = 0; i < 5; i++) {
-    assert.equal(await preStep({ agent, messages: [] }, async () => decision), decision)
-  }
+test('首步提醒先交付，普通后续步骤不再重复核查清单', async () => {
+  const h = harness(), agent = h.agent()
+  assert.match(notice(await h.step(agent, [h.user('评估当前结果')])) , /默认先返回已确认结论/)
+  assert.equal(await h.step(agent), h.decision)
+  assert.equal(await h.step(agent), h.decision)
 })
 
-test('长任务的视觉迭代不因步骤多而被取消或收起工具', async () => {
-  let preStep
-  const agent = {
-    session: { header: { agentPreset: 'fast' } },
-    ctx: { preset: 'fast', tools: { restrict() { assert.fail('不应限制质量验证所需工具') } } },
-  }
-  apply(context((event, callback) => { if (event === 'agent/pre-step') preStep = callback }))
-  const next = async () => ({ kind: 'enter', messages: [] })
-  for (let step = 1; step <= 50; step++) {
-    assert.equal((await preStep({ agent, messages: [] }, next)).kind, 'enter')
-  }
+test('拒绝的步骤不消耗预算，也不注入消息', async () => {
+  const h = harness(), agent = h.agent(), rejection = { kind: 'reject' }
+  assert.equal(await h.events.get('agent/pre-step')({ agent, messages: [] }, async () => rejection), rejection)
+  assert.match(notice(await h.step(agent)), /当前为快速模式/)
 })
 
-test('预设切换使用实际挂载状态，切出后停止干预，重新进入重置提醒', async () => {
-  assert.deepEqual(inject, ['agentPresets'])
-  const handlers = new Map()
-  apply(context((event, callback) => handlers.set(event, callback)), { maxTokens: 8192 })
-  // 创建信息不可变，后续选择由当前挂载的预设表达。
-  const agent = {
-    ctx: { preset: 'standard' },
-    session: { header: Object.freeze({ agentPreset: 'standard' }) },
+test('默认五个工具批次后保留一次无工具回答，同批多个调用只占一轮', async () => {
+  const h = harness(), agent = h.agent(), assembly = { tools: [{ name: 'inspect' }], sections: [] }
+  for (let round = 1; round <= 5; round++) {
+    await h.step(agent)
+    assert.equal(h.call(agent), undefined)
+    assert.equal(h.call(agent), undefined)
   }
-  const decision = { kind: 'enter', messages: [] }
-  const step = () => handlers.get('agent/pre-step')({ agent, messages: [] }, async () => decision)
-  const selection = { model: 'example' }
-  const request = () => handlers.get('agent/request')({ agent }, async () => selection)
-  assert.equal(await step(), decision)
-  assert.equal(await request(), selection)
+  assert.deepEqual((await h.assemble(agent, assembly)).tools, [])
+  assert.equal(assembly.tools.length, 1)
+  const answer = await h.step(agent)
+  assert.equal(answer.kind, 'enter')
+  assert.match(notice(answer), /现在仅回答/)
+  assert.match(h.call(agent), /预算已用尽/)
+})
 
+test('调用总数独立于轮数限制，同批并发不能突破上限', async () => {
+  const h = harness({ maxToolCalls: 3 }), agent = h.agent()
+  await h.step(agent)
+  const results = await Promise.all(Array.from({ length: 12 }, async () => h.call(agent)))
+  assert.equal(results.filter(value => value === undefined).length, 3)
+  assert.equal(results.filter(value => typeof value === 'string').length, 9)
+  assert.match(notice(await h.step(agent)), /本轮取证已结束/)
+})
+
+test('请求不存在的工具同样消耗批次，不能无限重试', async () => {
+  const h = harness({ maxToolRounds: 1 }), agent = h.agent()
+  await h.step(agent)
+  h.events.get('session/event')(agent.session, { type: 'assistant/message', data: { message: { content: [{ type: 'tool-call', name: 'nonexistent' }] } } })
+  const assembly = { tools: [{ name: 'inspect' }] }
+  assert.deepEqual((await h.assemble(agent, assembly)).tools, [])
+  assert.match(notice(await h.step(agent)), /现在仅回答/)
+})
+
+test('失败尝试也计入预算，通知不能重置预算', async () => {
+  const h = harness({ maxToolCalls: 1 }), agent = h.agent()
+  await h.step(agent)
+  assert.equal(h.call(agent), undefined)
+  h.events.get('agent/inbox/inserted')({ agent, message: { source: { kind: 'tool-jobs' } } })
+  assert.match(h.call(agent), /预算已用尽/)
+})
+
+test('新用户入队立即恢复工具并开始新预算，会话之间隔离', async () => {
+  const h = harness({ maxToolCalls: 1 }), a = h.agent(), b = h.agent(), assembly = { tools: [{ name: 'inspect' }] }
+  await h.step(a, [h.user('任务甲')]); h.call(a)
+  assert.deepEqual((await h.assemble(a, assembly)).tools, [])
+  assert.equal(await h.assemble(b, assembly), assembly)
+  h.events.get('agent/inbox/inserted')({ agent: a, message: h.user('继续任务甲') })
+  assert.equal(await h.assemble(a, assembly), assembly)
+  assert.match(notice(await h.step(a, [h.user('继续任务甲')])), /继续任务甲/)
+  assert.equal(h.call(a), undefined)
+})
+
+test('预设切换使用当前挂载状态，不受创建 header 影响', async () => {
+  assert.deepEqual(inject, ['agentPresets', 'tools'])
+  const h = harness(), agent = h.agent('standard', 'standard')
+  assert.equal(await h.step(agent), h.decision)
   agent.ctx.preset = 'fast'
-  assert.match((await step()).messages[0].content[0].text, /快速模式执行提醒/)
-  assert.deepEqual(await request(), { model: 'example', reasoningEffort: 'low', maxTokens: 8192 })
-  assert.match((await step()).messages[0].content[0].text, /1 个模型步骤/)
-  assert.match((await step()).messages[0].content[0].text, /2 个模型步骤/)
-
+  assert.match(notice(await h.step(agent)), /当前为快速模式/)
   agent.ctx.preset = 'standard'
-  assert.equal(await step(), decision)
-  assert.equal(await request(), selection)
+  assert.equal(await h.step(agent), h.decision)
+  assert.equal(await h.request(agent, h.decision), h.decision)
   agent.ctx.preset = 'fast'
-  assert.match((await step()).messages[0].content[0].text, /快速模式执行提醒/)
+  assert.match(notice(await h.step(agent)), /当前为快速模式/)
   assert.equal(agent.session.header.agentPreset, 'standard')
 })
 
-test('创建时为 fast 但当前已切出或未绑定时，不按旧 header 注入', async () => {
-  const handlers = new Map()
-  apply(context((event, callback) => handlers.set(event, callback)))
-  for (const preset of ['standard', undefined]) {
-    const agent = { ctx: { preset }, session: { header: { agentPreset: 'fast' } } }
-    const decision = { kind: 'enter', messages: [] }
-    assert.equal(await handlers.get('agent/pre-step')({ agent, messages: [] }, async () => decision), decision)
-    const selection = { model: 'example' }
-    assert.equal(await handlers.get('agent/request')({ agent }, async () => selection), selection)
+test('完整执行模式不使用快速预算或超时，仍保留用户显式选择', async () => {
+  const h = harness({ maxToolRounds: 1, maxToolCalls: 1, toolTimeoutMs: 1 }), agent = h.agent('fast-full')
+  assert.match(notice(await h.step(agent)), /完整执行模式/)
+  for (let i = 0; i < 30; i++) { assert.equal(h.call(agent), undefined); assert.equal((await h.step(agent)).kind, 'enter') }
+  const assembly = { tools: [{ name: 'inspect' }] }
+  assert.equal(await h.assemble(agent, assembly), assembly)
+  assert.deepEqual(await h.request(agent, { reasoningEffort: 'high' }), { reasoningEffort: 'high' })
+  const exec = { agent, signal: new AbortController().signal }
+  const original = exec.signal
+  await h.events.get('tools/execute')(exec, async () => { await new Promise(resolve => setTimeout(resolve, 5)); assert.equal(exec.signal, original) })
+})
+
+test('工具超时发出独立取消，恢复原信号并进入回答阶段', async () => {
+  const h = harness({ toolTimeoutMs: 5 }), agent = h.agent()
+  await h.step(agent); h.call(agent)
+  const controller = new AbortController(), exec = { agent, signal: controller.signal }, original = exec.signal
+  await h.events.get('tools/execute')(exec, async () => {
+    await new Promise(resolve => exec.signal.addEventListener('abort', resolve, { once: true }))
+    assert.equal(exec.signal.aborted, true)
+  })
+  assert.equal(exec.signal, original)
+  assert.equal(controller.signal.aborted, false)
+  assert.match(notice(await h.step(agent)), /现在仅回答/)
+})
+
+test('工具失败恢复信号，用户取消保持可传播', async () => {
+  const h = harness(), agent = h.agent(); await h.step(agent)
+  const controller = new AbortController(), exec = { agent, signal: controller.signal }, original = exec.signal
+  const failure = new Error('执行失败')
+  await assert.rejects(h.events.get('tools/execute')(exec, async () => { controller.abort(); assert.equal(exec.signal.aborted, true); throw failure }), error => error === failure)
+  assert.equal(exec.signal, original)
+})
+
+test('后台启动被拒绝且计数，完整执行不受该限制', async () => {
+  const h = harness({ maxToolCalls: 1 }), agent = h.agent()
+  await h.step(agent)
+  assert.match(h.call(agent, 'bash', { run_in_background: true }), /不启动后台/)
+  assert.match(h.call(agent), /预算已用尽/)
+  assert.equal(h.call(h.agent('fast-full'), 'bash', { run_in_background: true }), undefined)
+})
+
+test('异常模型在最终回答阶段仍请求工具时不会无限循环', async () => {
+  const h = harness({ maxToolRounds: 1 }), agent = h.agent()
+  await h.step(agent); h.call(agent)
+  await h.step(agent)
+  assert.match(h.call(agent), /预算已用尽/)
+  assert.deepEqual(await h.step(agent, [], 3), { kind: 'reject' })
+  assert.match(agent.session.records[0][1].message.content[0].text, /模型未能完成最终回答/)
+})
+
+test('请求摘录有界且只包含用户文本，新请求替换旧目标', async () => {
+  const h = harness({ maxToolCalls: 1 }), agent = h.agent()
+  const first = { source: { kind: 'user' }, content: [{ type: 'image', data: '不注入' }, { type: 'text', text: '甲'.repeat(600) + '超界' }] }
+  const result = notice(await h.step(agent, [first]))
+  assert.ok(result.endsWith('甲'.repeat(600)))
+  assert.doesNotMatch(result, /不注入|超界/)
+  h.call(agent)
+  assert.match(notice(await h.step(agent)), /甲{600}/)
+  const reset = notice(await h.step(agent, [h.user('新目标')]))
+  assert.match(reset, /新目标/)
+  assert.doesNotMatch(reset, /甲{600}/)
+})
+
+test('idle 与销毁时释放预算状态', async () => {
+  const h = harness({ maxToolCalls: 1 }), agent = h.agent(), assembly = { tools: [{ name: 'inspect' }] }
+  for (const event of ['agent/status', 'agent/disposed']) {
+    await h.step(agent); h.call(agent)
+    h.events.get(event)({ agent, status: 'idle' })
+    assert.equal(await h.assemble(agent, assembly), assembly)
   }
-})
-
-test('提醒保留本回合用户目标，通知不替换目标，新请求替换且不同 agent 隔离', async () => {
-  let preStep
-  apply(context((event, callback) => { if (event === 'agent/pre-step') preStep = callback }))
-  const agent = { ctx: { preset: 'fast' } }
-  const other = { ctx: { preset: 'fast' } }
-  const user = text => ({ source: { kind: 'user' }, content: [{ type: 'text', text }] })
-  const step = (subject, messages = []) => preStep({ agent: subject, messages }, async () => ({ kind: 'enter', messages: [] }))
-  const notice = result => result.messages[0].content[0].text
-  assert.match(notice(await step(agent, [user('只审计当前版本的导入异常')])), /只审计当前版本的导入异常/)
-  await step(agent, [{ source: { kind: 'fast-mode-budget' }, content: [{ type: 'text', text: '不应成为任务' }] }])
-  const third = notice(await step(agent))
-  assert.match(third, /只审计当前版本的导入异常/)
-  assert.doesNotMatch(third, /不应成为任务/)
-  assert.doesNotMatch(notice(await step(other, [user('修复页面交互')])), /导入异常/)
-  const reset = notice(await step(agent, [user('现在深入定位存储故障')]))
-  assert.match(reset, /现在深入定位存储故障/)
-  assert.doesNotMatch(reset, /只审计当前版本/)
-})
-
-test('用户请求摘录有界，不把非文本内容转换为指令', async () => {
-  let preStep
-  apply(context((event, callback) => { if (event === 'agent/pre-step') preStep = callback }))
-  const agent = { ctx: { preset: 'fast' } }
-  const message = { source: { kind: 'user' }, content: [{ type: 'image', data: '不应注入' }, { type: 'text', text: '甲'.repeat(1200) + '超出边界' }] }
-  const result = await preStep({ agent, messages: [message] }, async () => ({ kind: 'enter', messages: [] }))
-  const text = result.messages[0].content[0].text
-  assert.ok(text.endsWith('甲'.repeat(1200)))
-  assert.doesNotMatch(text, /不应注入|超出边界/)
 })
