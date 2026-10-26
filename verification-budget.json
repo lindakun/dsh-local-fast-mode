@@ -1,5 +1,5 @@
 {
-  "date": "2026-10-25",
+  "date": "2026-10-26",
   "method": "DSH headless 真实组装、工具调度与执行 guard；确定性测试适配器，不调用供应商或真实设备。预设服务使用替身。",
   "cliVersion": "0.2.0-rc.2",
   "runs": [
@@ -20,7 +20,7 @@
         2,
         0
       ],
-      "elapsedMs": 600,
+      "elapsedMs": 630,
       "passed": true
     },
     {
@@ -31,7 +31,7 @@
         2,
         0
       ],
-      "elapsedMs": 463,
+      "elapsedMs": 479,
       "passed": true
     },
     {
@@ -43,7 +43,7 @@
         2,
         0
       ],
-      "elapsedMs": 470,
+      "elapsedMs": 481,
       "passed": true
     },
     {
@@ -54,7 +54,7 @@
         2,
         0
       ],
-      "elapsedMs": 474,
+      "elapsedMs": 509,
       "passed": true
     },
     {
@@ -65,7 +65,7 @@
         3,
         0
       ],
-      "elapsedMs": 562,
+      "elapsedMs": 575,
       "passed": true
     },
     {
@@ -76,7 +76,7 @@
         6,
         0
       ],
-      "elapsedMs": 470,
+      "elapsedMs": 494,
       "passed": true
     },
     {
@@ -92,7 +92,7 @@
         2,
         2
       ],
-      "elapsedMs": 530,
+      "elapsedMs": 564,
       "passed": true
     },
     {
@@ -108,7 +108,7 @@
         2,
         2
       ],
-      "elapsedMs": 528,
+      "elapsedMs": 553,
       "passed": true
     },
     {
@@ -119,7 +119,7 @@
         2,
         0
       ],
-      "elapsedMs": 459,
+      "elapsedMs": 473,
       "passed": true
     },
     {
@@ -130,7 +130,7 @@
         2,
         0
       ],
-      "elapsedMs": 465,
+      "elapsedMs": 460,
       "passed": true
     },
     {
@@ -166,7 +166,7 @@
         2,
         0
       ],
-      "elapsedMs": 458,
+      "elapsedMs": 468,
       "passed": true
     },
     {
@@ -182,7 +182,7 @@
         2,
         2
       ],
-      "elapsedMs": 537,
+      "elapsedMs": 585,
       "passed": true
     },
     {
@@ -193,7 +193,7 @@
         2,
         0
       ],
-      "elapsedMs": 463,
+      "elapsedMs": 490,
       "passed": true
     },
     {
@@ -209,7 +209,18 @@
         2,
         2
       ],
-      "elapsedMs": 544,
+      "elapsedMs": 552,
+      "passed": true
+    },
+    {
+      "id": "dialog-custom-decline",
+      "toolBodies": 1,
+      "modelRequests": 2,
+      "requestToolCounts": [
+        2,
+        0
+      ],
+      "elapsedMs": 490,
       "passed": true
     },
     {
@@ -220,7 +231,7 @@
         2,
         0
       ],
-      "elapsedMs": 458,
+      "elapsedMs": 468,
       "passed": true
     },
     {
@@ -236,8 +247,9 @@
         2,
         2
       ],
-      "elapsedMs": 900,
+      "elapsedMs": 860,
       "passed": true
     }
-  ]
+  ],
+  "change": "1.9.1：弹窗自由输入的原文完整写入会话事件与模型上下文；新增 dialog-custom-decline 用例，并对两条自定义输入路径断言会话正文与用户原文逐字一致。"
 }

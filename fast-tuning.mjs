@@ -60,16 +60,16 @@ export function apply(ctx, config = {}) {
   // 选择框只作为可选增强：服务缺失（headless、CLI）时退回原有文本路径，不改变预算语义。
   const questionService = () => (typeof ctx.get === 'function' ? ctx.get('userQuestions') : undefined)
 
-  /** 把一次弹窗答案解析成 grant/decline；自由输入交回文本识别器，无法识别时按交付处理。 */
+  /** 授权决定与原始补充要求一起传递；只用 trim 判断空输入，不裁剪用户原文。 */
   const choiceOf = answer => {
     const item = answer?.answers?.find(entry => entry.id === DIALOG_QUESTION_ID)
     if (!item) return
     const selected = item.selected ?? []
-    if (selected.includes(GRANT_LABEL)) return 'grant'
-    if (selected.includes(DECLINE_LABEL)) return 'decline'
-    const custom = (item.custom ?? '').trim()
-    if (!custom) return 'decline'
-    return userAuthorization({}, { source: { kind: 'user' }, content: [{ type: 'text', text: custom }] }).authorized ? 'grant' : 'decline'
+    const custom = item.custom?.trim() ? item.custom : ''
+    const choice = selected.includes(GRANT_LABEL) ? 'grant'
+      : selected.includes(DECLINE_LABEL) ? 'decline'
+        : custom && userAuthorization({}, { source: { kind: 'user' }, content: [{ type: 'text', text: custom }] }).authorized ? 'grant' : 'decline'
+    return { choice, custom }
   }
 
   /** 询问用户并等待选择；限时阻塞，超时视为用户离开并按继续深入处理。 */
@@ -92,7 +92,7 @@ export function apply(ctx, config = {}) {
       if (outcome === EXPIRED) {
         // 无任何响应：不写入会话事件，只在本次工作内存中按“继续深入”处理。
         controller.abort(new Error('授权选择超时'))
-        return 'default-grant'
+        return { choice: 'default-grant' }
       }
       if (outcome.failed) return
       return choiceOf(outcome.value)
@@ -102,13 +102,13 @@ export function apply(ctx, config = {}) {
     }
   }
 
-  /** 把选择结果写成可重放的会话事件，恢复会话时无需重新匹配文字。 */
-  const appendChoice = (agent, choice) => {
+  /** 原文进入持久化会话与模型上下文；授权重放仍以独立的 choice 字段为准。 */
+  const appendChoice = (agent, { choice, custom }) => {
     const message = {
       id: crypto.randomUUID(),
       role: 'user',
       source: { kind: DIALOG_SOURCE, form: DIALOG_FORM, choice },
-      content: [{ type: 'text', text: choice === 'grant' ? `我选择：${GRANT_LABEL}。` : `我选择：${DECLINE_LABEL}。` }],
+      content: [{ type: 'text', text: custom || (choice === 'grant' ? `我选择：${GRANT_LABEL}。` : `我选择：${DECLINE_LABEL}。`) }],
     }
     agent.session.append('user/message', message, { surfaceOp: 'append' })
     return message
@@ -146,10 +146,10 @@ export function apply(ctx, config = {}) {
     if (!state || !exhausted(state)) return assembly
     if (authorizePrompt && !state.prompted && questionService()) {
       state.prompted = true
-      const choice = await askAuthorization(context.scope, context.signal)
-      if (choice === 'grant') {
+      const answer = await askAuthorization(context.scope, context.signal)
+      if (answer?.choice === 'grant') {
         // 选择本身就是授权：落盘后本次工作不再受批次与次数限制。
-        const message = appendChoice(context.scope, 'grant')
+        const message = appendChoice(context.scope, answer)
         authorizations.set(context.scope, dialogAuthorization(authorizationOf(context.scope), message))
         state.authorized = true
         state.finalStarted = false
@@ -157,7 +157,7 @@ export function apply(ctx, config = {}) {
         state.justAuthorized = true
         return assembly
       }
-      if (choice === 'default-grant') {
+      if (answer?.choice === 'default-grant') {
         // 超时无人应答：按继续深入处理，但不落盘、不标记为显式授权，
         // 因此只解除本次工作的预算，不会变成对后续新请求的永久授权。
         state.authorized = true
@@ -167,8 +167,8 @@ export function apply(ctx, config = {}) {
         state.justAuthorized = true
         return assembly
       }
-      if (choice === 'decline') {
-        appendChoice(context.scope, 'decline')
+      if (answer?.choice === 'decline') {
+        appendChoice(context.scope, answer)
         authorizations.set(context.scope, { ...authorizationOf(context.scope), authorized: false, pending: false })
       }
     }

@@ -312,6 +312,28 @@ test('自由输入作为兜底：授权语义解除预算，无关文字按交�
   assert.match(decline.call(b), /预算已用尽/)
 })
 
+for (const { label, selected, custom, authorized } of [
+  { label: '自由输入授权', selected: [], custom: `  继续深入，最终回答第一行必须是 CUSTOM-4821。\n${'保留补充要求。'.repeat(100)}\n尾部要求也要保留。  `, authorized: true },
+  { label: '自由输入交付', selected: [], custom: '就此交付。\n最终回答第一行必须是 CUSTOM-DECLINE-4821。', authorized: false },
+  { label: '快捷授权附带自由输入', selected: ['继续深入'], custom: '只处理 A，不修改 B。', authorized: true },
+  { label: '快捷交付附带自由输入', selected: ['就此交付'], custom: '继续深入，但当前选择仍按就此交付处理。', authorized: false },
+]) test(`${label}完整保留原文，恢复会话仍按选择重放预算`, async () => {
+  const h = harness({ maxToolCalls: 1 }), agent = h.agent(), assembly = { tools: [{ name: 'inspect' }] }
+  h.reply({ answers: [{ id: 'fast-mode-authorization', selected, custom }] })
+  await h.step(agent); h.call(agent)
+  assert.deepEqual((await h.assemble(agent, assembly)).tools, authorized ? assembly.tools : [])
+  const choices = agent.session.records.filter(([, data]) => data.source?.form === 'authorization-choice')
+  assert.equal(choices.length, 1)
+  const message = choices[0][1]
+  assert.equal(message.content[0].text, custom, '补充要求不得丢失、裁剪或替换为固定文案')
+  assert.equal(message.source.choice, authorized ? 'grant' : 'decline')
+  const restored = h.agent()
+  restored.session.log = [{ type: 'user/message', data: message }]
+  await h.step(restored, [h.user('进度如何？')])
+  assert.equal(h.call(restored), undefined)
+  assert.equal(typeof h.call(restored), authorized ? 'undefined' : 'string')
+})
+
 test('无应答者、抛错、空应答与取消都退回原有强制回答，不虚构选择', async () => {
   for (const mode of ['absent', 'throw', 'empty']) {
     const h = harness({ maxToolCalls: 1, authorizePromptTimeoutMs: 20, userQuestions: mode !== 'absent' }), agent = h.agent()

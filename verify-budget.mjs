@@ -27,7 +27,7 @@ class Adapter extends LlmAdapter {
   async *stream(options) {
     this.count++;
     const tools=(options.tools||[]).map(t=>t.name);
-    record({kind:'request', tools, index:this.count});
+    record({kind:'request', tools, index:this.count, customInputVisible: scenario.customText ? JSON.stringify(options.messages).includes(JSON.stringify(scenario.customText).slice(1,-1)) : undefined});
     const wantsTool = (tools.length>0 && this.count <= (scenario.modelToolRounds ?? (scenario.full ? 6 : 20))) || scenario.rogue;
     if(wantsTool) {
       for(let i=0;i<(scenario.batch||1);i++) {
@@ -50,6 +50,10 @@ export function apply(ctx) {
   const asked=[];
   const userQuestions = scenario.dialog ? { async ask(request){ record({kind:'ask', questions:request.questions.map(q=>q.id)}); asked.push(request); await new Promise(r=>setTimeout(r,10)); const choice=scenario.dialog; return {answers:[{id:request.questions[0].id, selected: choice==='grant'?['继续深入']:choice==='decline'?['就此交付']:[], ...(choice==='custom'?{custom: scenario.customText}:{}) }]}; } } : scenario.dialogSilent ? { async ask(request){ record({kind:'ask', questions:request.questions.map(q=>q.id)}); asked.push(request); return new Promise(()=>{}) } } : undefined;
   tuning({agentPresets:{composedPreset:()=>scenario.full?'fast-full':'fast'},tools:ctx.tools,on:ctx.on.bind(ctx),get:name=>name==='userQuestions'?userQuestions:undefined},scenario.config||{});
+  ctx.on('session/event',(session,event)=>{
+    const message=event.type==='user/message'?event.data:undefined;
+    if(message?.source?.form==='authorization-choice') record({kind:'choice-message',text:message.content?.[0]?.text,choice:message.source.choice});
+  });
   ctx.on('tools/execute',async(exec,next)=>{
     record({kind:'dispatch',name:exec.name});
     try{return await next()}finally{record({kind:'dispatch-end',name:exec.name,aborted:exec.signal.aborted})}
@@ -79,7 +83,8 @@ const cases = [
   { id: 'rogue-final-call', rogue: true, config: { maxToolRounds: 1 }, bodies: 1 },
   { id: 'dialog-grant', dialog: 'grant', modelToolRounds: 6, config: { maxToolRounds: 1, maxToolCalls: 1 }, bodies: 6, expectAsk: 1, expectAuthorized: true },
   { id: 'dialog-decline', dialog: 'decline', config: { maxToolRounds: 1, maxToolCalls: 1 }, bodies: 1, expectAsk: 1 },
-  { id: 'dialog-custom-grant', dialog: 'custom', customText: '继续深入排查，把根因找清楚', modelToolRounds: 6, config: { maxToolRounds: 1, maxToolCalls: 1 }, bodies: 6, expectAsk: 1, expectAuthorized: true },
+  { id: 'dialog-custom-grant', dialog: 'custom', customText: '继续深入排查，最终回答第一行必须是 CUSTOM-4821。', modelToolRounds: 6, config: { maxToolRounds: 1, maxToolCalls: 1 }, bodies: 6, expectAsk: 1, expectAuthorized: true },
+  { id: 'dialog-custom-decline', dialog: 'custom', customText: '就此交付，最终回答第一行必须是 CUSTOM-DECLINE-4821。', config: { maxToolRounds: 1, maxToolCalls: 1 }, bodies: 1, expectAsk: 1 },
   { id: 'dialog-absent', config: { maxToolRounds: 1, maxToolCalls: 1 }, bodies: 1, expectAsk: 0 },
   { id: 'dialog-timeout-continue', dialogSilent: true, modelToolRounds: 6, config: { maxToolRounds: 1, maxToolCalls: 1, authorizePromptTimeoutMs: 300 }, bodies: 6, expectAsk: 1, expectAuthorized: true },
 ]
@@ -110,6 +115,14 @@ for (const scenario of cases) {
   if (!scenario.full && !scenario.expectAuthorized && scenario.id !== 'authorized-request') assert.equal(requests.at(-1).tools.length, 0, scenario.id + ' 最终请求仍包含工具')
   if (scenario.unknown) assert.equal(requests.length, 3)
   if (scenario.expectAsk !== undefined) assert.equal(records.filter(row => row.kind === 'ask').length, scenario.expectAsk, scenario.id + ' 选择框次数')
+  if (scenario.customText) {
+    assert.ok(requests.slice(1).length > 0 && requests.slice(1).every(row => row.customInputVisible), scenario.id + ' 自由输入未完整进入后续模型请求')
+    // 落盘正文必须是用户原文：不截断、不替换成固定文案。
+    const stored = records.filter(row => row.kind === 'choice-message')
+    assert.equal(stored.length, 1, scenario.id + ' 选择结果未写入会话')
+    assert.equal(stored[0].text, scenario.customText, scenario.id + ' 会话正文与用户原文不一致')
+    assert.equal(stored[0].choice, scenario.expectAuthorized ? 'grant' : 'decline', scenario.id + ' 授权决定与选择不符')
+  }
   // 选择框在真实 agent-loop 的 pre-step 中等待作答，验证不会死锁且授权在同一回合生效。
   if (scenario.expectAuthorized) assert.ok(bodies > 1, scenario.id + ' 授权后未继续执行工具')
   if (scenario.slow) assert.ok(records.some(row => row.kind === 'cancelled'))
@@ -147,6 +160,6 @@ for (const scenario of cases) {
     }
   }
 }
-const report = { date: '2026-10-25', method: 'DSH headless 真实组装、工具调度与执行 guard；确定性测试适配器，不调用供应商或真实设备。预设服务使用替身。', cliVersion: JSON.parse(readFileSync(join(dirname(dirname(cli)), 'package.json'), 'utf8')).version, runs }
+const report = { date: '2026-10-26', method: 'DSH headless 真实组装、工具调度与执行 guard；确定性测试适配器，不调用供应商或真实设备。预设服务使用替身。', cliVersion: JSON.parse(readFileSync(join(dirname(dirname(cli)), 'package.json'), 'utf8')).version, runs }
 if (process.argv[2]) writeFileSync(resolve(process.argv[2]), JSON.stringify(report, null, 2) + '\n')
 console.log('隔离集成检查通过，原始材料目录：' + temp)
