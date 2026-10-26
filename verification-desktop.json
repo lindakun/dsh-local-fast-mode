@@ -1,0 +1,482 @@
+{
+  "date": "2026-10-26",
+  "timezone": "Asia/Shanghai",
+  "pluginVersion": "1.9.0",
+  "sourceRevision": "1b6b6d0",
+  "desktopVersion": "0.2.1-rc.3",
+  "driver": "Codex Computer Use：mcp__cua_repl，直接操作正在使用的 DeepSeek Harness 桌面应用",
+  "provider": "WorkBuddy CN",
+  "modelDisplayName": "Deepseek-V4.1-Flash · x0.11",
+  "reasoningEffort": "Max（两组相同的显式设置，未测试缺省 low 的效果）",
+  "workspace": "/tmp/dsh-fast-quality-20261026",
+  "method": {
+    "independentFreshChats": true,
+    "repeats": 3,
+    "regularRuns": 24,
+    "order": "同任务配对，第二轮交换先后顺序；全部串行执行",
+    "baseline": "桌面标准模式",
+    "treatment": "桌面快速模式，原有默认预算和裁剪配置",
+    "timeSource": "界面已完成用时，精度为秒，含模型、工具及其等待；不含操作者切换会话的时间",
+    "callSource": "轨迹中的工具行数；一条 shell 调用中的子命令不另计",
+    "tokenSource": "界面用量 K tok 展示值，已四舍五入，含缓存，不能等同计费 token",
+    "regularBudgetExhaustions": 0
+  },
+  "runs": [
+    {
+      "order": 1,
+      "id": "query-standard-1",
+      "kind": "query",
+      "mode": "standard",
+      "repeat": 1,
+      "seconds": 10,
+      "modelSteps": 4,
+      "toolCalls": 3,
+      "displayTokensK": 44
+    },
+    {
+      "order": 2,
+      "id": "query-fast-1",
+      "kind": "query",
+      "mode": "fast",
+      "repeat": 1,
+      "seconds": 7,
+      "modelSteps": 3,
+      "toolCalls": 3,
+      "displayTokensK": 20.5
+    },
+    {
+      "order": 3,
+      "id": "diagnosis-fast-1",
+      "kind": "diagnosis",
+      "mode": "fast",
+      "repeat": 1,
+      "seconds": 26,
+      "modelSteps": 6,
+      "toolCalls": 8,
+      "displayTokensK": 61.8
+    },
+    {
+      "order": 4,
+      "id": "diagnosis-standard-1",
+      "kind": "diagnosis",
+      "mode": "standard",
+      "repeat": 1,
+      "seconds": 66,
+      "modelSteps": 8,
+      "toolCalls": 14,
+      "displayTokensK": 138
+    },
+    {
+      "order": 5,
+      "id": "repair-standard-1",
+      "kind": "repair",
+      "mode": "standard",
+      "repeat": 1,
+      "seconds": 20,
+      "modelSteps": 7,
+      "toolCalls": 10,
+      "displayTokensK": 85.9
+    },
+    {
+      "order": 6,
+      "id": "repair-fast-1",
+      "kind": "repair",
+      "mode": "fast",
+      "repeat": 1,
+      "seconds": 14,
+      "modelSteps": 6,
+      "toolCalls": 7,
+      "displayTokensK": 43.5
+    },
+    {
+      "order": 7,
+      "id": "artifact-fast-1",
+      "kind": "artifact",
+      "mode": "fast",
+      "repeat": 1,
+      "seconds": 15,
+      "modelSteps": 5,
+      "toolCalls": 4,
+      "displayTokensK": 37.9
+    },
+    {
+      "order": 8,
+      "id": "artifact-standard-1",
+      "kind": "artifact",
+      "mode": "standard",
+      "repeat": 1,
+      "seconds": 35,
+      "modelSteps": 9,
+      "toolCalls": 13,
+      "displayTokensK": 113
+    },
+    {
+      "order": 9,
+      "id": "query-fast-2",
+      "kind": "query",
+      "mode": "fast",
+      "repeat": 2,
+      "seconds": 9,
+      "modelSteps": 4,
+      "toolCalls": 3,
+      "displayTokensK": 27
+    },
+    {
+      "order": 10,
+      "id": "query-standard-2",
+      "kind": "query",
+      "mode": "standard",
+      "repeat": 2,
+      "seconds": 9,
+      "modelSteps": 4,
+      "toolCalls": 3,
+      "displayTokensK": 43.9
+    },
+    {
+      "order": 11,
+      "id": "diagnosis-standard-2",
+      "kind": "diagnosis",
+      "mode": "standard",
+      "repeat": 2,
+      "seconds": 58,
+      "modelSteps": 6,
+      "toolCalls": 10,
+      "displayTokensK": 96.5
+    },
+    {
+      "order": 12,
+      "id": "diagnosis-fast-2",
+      "kind": "diagnosis",
+      "mode": "fast",
+      "repeat": 2,
+      "seconds": 21,
+      "modelSteps": 3,
+      "toolCalls": 5,
+      "displayTokensK": 26.5
+    },
+    {
+      "order": 13,
+      "id": "repair-fast-2",
+      "kind": "repair",
+      "mode": "fast",
+      "repeat": 2,
+      "seconds": 14,
+      "modelSteps": 7,
+      "toolCalls": 9,
+      "displayTokensK": 52.2
+    },
+    {
+      "order": 14,
+      "id": "repair-standard-2",
+      "kind": "repair",
+      "mode": "standard",
+      "repeat": 2,
+      "seconds": 22,
+      "modelSteps": 8,
+      "toolCalls": 11,
+      "displayTokensK": 99.8
+    },
+    {
+      "order": 15,
+      "id": "artifact-standard-2",
+      "kind": "artifact",
+      "mode": "standard",
+      "repeat": 2,
+      "seconds": 18,
+      "modelSteps": 6,
+      "toolCalls": 5,
+      "displayTokensK": 71.2
+    },
+    {
+      "order": 16,
+      "id": "artifact-fast-2",
+      "kind": "artifact",
+      "mode": "fast",
+      "repeat": 2,
+      "seconds": 16,
+      "modelSteps": 6,
+      "toolCalls": 5,
+      "displayTokensK": 46.3
+    },
+    {
+      "order": 17,
+      "id": "query-standard-3",
+      "kind": "query",
+      "mode": "standard",
+      "repeat": 3,
+      "seconds": 8,
+      "modelSteps": 3,
+      "toolCalls": 3,
+      "displayTokensK": 33.3
+    },
+    {
+      "order": 18,
+      "id": "query-fast-3",
+      "kind": "query",
+      "mode": "fast",
+      "repeat": 3,
+      "seconds": 8,
+      "modelSteps": 4,
+      "toolCalls": 3,
+      "displayTokensK": 27
+    },
+    {
+      "order": 19,
+      "id": "diagnosis-fast-3",
+      "kind": "diagnosis",
+      "mode": "fast",
+      "repeat": 3,
+      "seconds": 23,
+      "modelSteps": 4,
+      "toolCalls": 6,
+      "displayTokensK": 37.6
+    },
+    {
+      "order": 20,
+      "id": "diagnosis-standard-3",
+      "kind": "diagnosis",
+      "mode": "standard",
+      "repeat": 3,
+      "seconds": 54,
+      "modelSteps": 7,
+      "toolCalls": 11,
+      "displayTokensK": 108
+    },
+    {
+      "order": 21,
+      "id": "repair-standard-3",
+      "kind": "repair",
+      "mode": "standard",
+      "repeat": 3,
+      "seconds": 18,
+      "modelSteps": 7,
+      "toolCalls": 10,
+      "displayTokensK": 83.1
+    },
+    {
+      "order": 22,
+      "id": "repair-fast-3",
+      "kind": "repair",
+      "mode": "fast",
+      "repeat": 3,
+      "seconds": 12,
+      "modelSteps": 5,
+      "toolCalls": 7,
+      "displayTokensK": 35.9
+    },
+    {
+      "order": 23,
+      "id": "artifact-fast-3",
+      "kind": "artifact",
+      "mode": "fast",
+      "repeat": 3,
+      "seconds": 20,
+      "modelSteps": 7,
+      "toolCalls": 7,
+      "displayTokensK": 55.2
+    },
+    {
+      "order": 24,
+      "id": "artifact-standard-3",
+      "kind": "artifact",
+      "mode": "standard",
+      "repeat": 3,
+      "seconds": 28,
+      "modelSteps": 9,
+      "toolCalls": 10,
+      "displayTokensK": 111
+    }
+  ],
+  "totals": {
+    "standard": {
+      "seconds": 346,
+      "modelSteps": 78,
+      "toolCalls": 103,
+      "displayTokensK": 1027.7
+    },
+    "fast": {
+      "seconds": 185,
+      "modelSteps": 60,
+      "toolCalls": 67,
+      "displayTokensK": 471.4
+    }
+  },
+  "medians": {
+    "query": {
+      "standard": {
+        "seconds": 9,
+        "toolCalls": 3
+      },
+      "fast": {
+        "seconds": 8,
+        "toolCalls": 3
+      }
+    },
+    "diagnosis": {
+      "standard": {
+        "seconds": 58,
+        "toolCalls": 11
+      },
+      "fast": {
+        "seconds": 23,
+        "toolCalls": 6
+      }
+    },
+    "repair": {
+      "standard": {
+        "seconds": 20,
+        "toolCalls": 10
+      },
+      "fast": {
+        "seconds": 14,
+        "toolCalls": 7
+      }
+    },
+    "artifact": {
+      "standard": {
+        "seconds": 28,
+        "toolCalls": 10
+      },
+      "fast": {
+        "seconds": 16,
+        "toolCalls": 5
+      }
+    }
+  },
+  "reductionsPercent": {
+    "seconds": 46.5,
+    "modelSteps": 23.1,
+    "toolCalls": 35,
+    "displayTokensK": 54.1
+  },
+  "functionalValidation": {
+    "query": {
+      "correctRuns": 6,
+      "totalRuns": 6,
+      "expected": {
+        "paidOrders": 3,
+        "totalQuantity": 6,
+        "totalAmount": "190.00"
+      },
+      "method": "人工逐份核对界面答案"
+    },
+    "diagnosis": {
+      "directCauseCorrectRuns": 6,
+      "totalRuns": 6,
+      "expected": "客户端 schema=2，服务端 required schema=3，Q17 被明确拒绝；历史 storage_full 不作为当前证据",
+      "method": "人工核对答案与固定材料；根因命中不代表全部推断通过准确性验收"
+    },
+    "repair": {
+      "passedImplementations": 6,
+      "totalImplementations": 6,
+      "existingTestsPerImplementation": 4,
+      "independentChecksPerImplementation": 11
+    },
+    "artifact": {
+      "passedArtifacts": 6,
+      "totalArtifacts": 6,
+      "checks": [
+        "模型先实际生成 report.json",
+        "从 / 和 /tmp 运行",
+        "聚合、舍入、零请求、排序、精确结构",
+        "输入与文件范围保留"
+      ]
+    },
+    "readOnlyFixturesUnchanged": true
+  },
+  "qualityFindings": [
+    {
+      "id": "custom-input-lost",
+      "severity": "high",
+      "desktopReproduced": true,
+      "input": "继续深入，最终回答第一行必须是 CUSTOM-4821。",
+      "observedContext": "我选择：继续深入。",
+      "finalStartsWithRequestedMarker": false,
+      "markerInTrace": false,
+      "conclusion": "自由输入被缩减成授权决定，附加指令未进入模型上下文，损失任务约束"
+    },
+    {
+      "id": "diagnosis-overclaim",
+      "desktopReproduced": true,
+      "examples": [
+        {
+          "run": "diagnosis-standard-1",
+          "quote": "这个问题不属于网络、队列积压、worker 卡死或磁盘问题。这些方向都有当前日志中的正面证据可以排除。"
+        },
+        {
+          "run": "diagnosis-standard-2",
+          "quote": "当前导入失败的原因只有一个"
+        },
+        {
+          "run": "diagnosis-fast-2",
+          "quote": "因此**“存储写满”不是本次导入失败的原因**"
+        },
+        {
+          "run": "diagnosis-fast-3",
+          "quote": "说明该文件是拼接/轮转片段"
+        }
+      ],
+      "conclusion": "两组均有超过现有证据的排除或解释；TCP/心跳和未出现某类告警不能证明所有相关功能正常，时间戳回跳也不足以确定日志形成机制"
+    },
+    {
+      "id": "baseline-test-count-misreported",
+      "desktopReproduced": true,
+      "run": "repair-standard-2",
+      "quote": "基线测试 4 个全部失败",
+      "expected": "原始实现 1 项通过、3 项失败",
+      "conclusion": "功能修复正确，但最终报告的测试计数不实"
+    }
+  ],
+  "budgetRuns": [
+    {
+      "id": "budget-timeout-fast-1",
+      "seconds": 38,
+      "modelSteps": 17,
+      "toolCalls": 16,
+      "displayTokensK": 130,
+      "action": "无任何输入",
+      "observed": "第10次读取后出现选择框，十秒无响应后默认继续，读完16份材料",
+      "expectedCurrentDesign": true
+    },
+    {
+      "id": "budget-custom-fast-1",
+      "seconds": 37,
+      "modelSteps": 17,
+      "toolCalls": 16,
+      "displayTokensK": 130,
+      "action": "提交带 CUSTOM-4821 要求的自由输入",
+      "observed": "明确授权生效，但附加要求在上下文和最终回答中均丢失",
+      "passedCustomInstruction": false
+    },
+    {
+      "id": "budget-dismiss-fast-1",
+      "seconds": 38,
+      "modelSteps": 17,
+      "toolCalls": 16,
+      "displayTokensK": 130,
+      "action": "操作者错过十秒窗口，未成功点击放弃",
+      "observed": "自动继续；作为额外超时样本保留，不计入取消路径验收"
+    },
+    {
+      "id": "budget-dismiss-fast-2",
+      "seconds": 26,
+      "modelSteps": 11,
+      "toolCalls": 10,
+      "displayTokensK": 76.3,
+      "action": "点击放弃整组问题",
+      "observed": "不再读取，最终回答明确未读到终点",
+      "passedQuestionDismissal": true
+    }
+  ],
+  "limitations": [
+    "每类任务仅三对样本，不做统计显著性或跨任务普适保证",
+    "标准模式与快速模式按真实完整预设比较；未隔离提示、工具组成、裁剪各自的因果贡献",
+    "同一 WorkBuddy CN 模型与 Max 档位；未覆盖其他模型、供应商或 low 档位",
+    "缓存、网络、上游负载未固定；交替顺序只能减少顺序偏差",
+    "固定材料不访问真实生产服务；日志存在时间戳回跳，会诱发额外核查，不能据此比较所有故障任务",
+    "产物为 JSON 报告，不涵盖视觉设计质量",
+    "放弃问题不等于回合 AbortSignal 取消；未在桌面端验证异常提问服务忽略取消信号的场景",
+    "原始会话保留于桌面测试工作区，报告不包含个人会话、凭据或账号信息"
+  ],
+  "conclusion": "本组固定任务中执行耗时与调用量减少，基础功能未见退化；准确性仍有过度断言，自由输入存在真实约束丢失，尚不能全面验收质量不降。"
+}

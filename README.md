@@ -102,6 +102,12 @@ DSH 已开始的会话可能不允许切换预设，但不影响快速模式中�
 
 ## 验证与复现
 
+2026-10-26 补充了直接通过 Codex Computer Use 操作桌面 DSH 0.2.1-rc.3 的
+24 次标准/快速模式对照与 4 次预算压力运行。固定任务中累计耗时下降 46.5%，
+但复现了自由输入附加要求丢失，且两组仍存在过度断言，尚不能全面验收质量不降。
+详见 [桌面实测报告](./verification-desktop.md)、[逐次数据](./verification-desktop.json)
+及材料准备与产物检查脚本 `verify-desktop.mjs`；该脚本不替代桌面测试。
+
 ```bash
 npm test
 npm run test:integration
