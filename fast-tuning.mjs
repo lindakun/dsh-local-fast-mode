@@ -25,7 +25,7 @@ export function apply(ctx, config = {}) {
   const maxTokens = config.maxTokens
   const maxToolRounds = config.maxToolRounds ?? 10
   const maxToolCalls = config.maxToolCalls ?? 20
-  const toolTimeoutMs = config.toolTimeoutMs ?? 15000
+  const toolTimeoutMs = config.toolTimeoutMs ?? 30000
   const authorizePrompt = config.authorizePrompt ?? true
   // 限时阻塞：窗口打开后最多等这么久。无响应对应“用户离开”，按继续深入处理，不再一直挂着。
   const authorizePromptTimeoutMs = config.authorizePromptTimeoutMs ?? 10000

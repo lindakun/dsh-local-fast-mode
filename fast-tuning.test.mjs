@@ -167,6 +167,21 @@ test('工具超时发出独立取消，恢复原信号并进入回答阶段', as
   assert.match(notice(await h.step(agent)), /现在仅回答/)
 })
 
+test('未配置时单次工具超时默认三十秒', async t => {
+  const h = harness(), agent = h.agent()
+  await h.step(agent); h.call(agent)
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const controller = new AbortController(), exec = { agent, signal: controller.signal }
+  const running = h.events.get('tools/execute')(exec, () => new Promise(resolve => exec.signal.addEventListener('abort', resolve, { once: true })))
+  t.mock.timers.tick(29999)
+  assert.equal(exec.signal.aborted, false, '未满三十秒不应取消')
+  t.mock.timers.tick(1)
+  assert.equal(exec.signal.aborted, true, '满三十秒应取消')
+  await running
+  assert.equal(exec.signal, controller.signal)
+  assert.match(notice(await h.step(agent)), /现在仅回答/)
+})
+
 test('工具失败恢复信号，用户取消保持可传播', async () => {
   const h = harness(), agent = h.agent(); await h.step(agent)
   const controller = new AbortController(), exec = { agent, signal: controller.signal }, original = exec.signal
