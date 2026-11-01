@@ -106,6 +106,26 @@ DSH 已开始的会话可能不允许切换预设，但不影响快速模式中�
 它是单次请求输出预算，不能当作独立思考预算或整回合耗时限制；
 此前 WorkBuddy 通道曾返回超过请求声明的输出计数，因此没有重新默认启用。
 
+## 仓库结构
+
+插件本身零运行依赖，只用 Node 内置模块；下表之外没有构建步骤，克隆后即可运行。
+
+| 路径 | 作用 |
+| --- | --- |
+| `fast-tuning.mjs` | 插件入口（`package.json` 的 `exports["./tuning"]`）：预算状态机、提示注入、工具 guard、超时改写 |
+| `authorization.mjs` | 授权判定纯函数，不依赖 DSH 运行时，可单独测试 |
+| `cordis.patch.yml` | bundle patch：`fast` 与 `fast-full` 两个预设、工具组成、`fast-tuning` 默认配置 |
+| `*.test.mjs` | `node:test` 单元测试，由 `npm test` 汇总运行 |
+| `verify-budget.mjs` | 集成检查，需要本机 `dsh`；用临时 `DSH_HOME` 跑真实提示组装与工具调度 |
+| `verify-desktop.mjs` | 桌面实测的材料准备与产物检查，不替代人工记录 |
+| `verification-*.json` / `verification-desktop.md` | 各期实测证据；历史文件不代表本版性能 |
+| `.gitignore` | 忽略 `node_modules`、系统与编辑器文件、日志与集成临时目录 |
+| `.github/workflows/ci.yml` | CI：推送 `main` 与 PR 时在 Node 22/24 上跑 `npm test` |
+| `pnpm-lock.yaml` | 空 importer 的锁文件，仅声明零依赖边界，不含第三方包 |
+
+CI 只跑单元测试。`test:integration` 依赖本机安装的 DSH 与它解析出的内部包，
+无法在通用 CI 镜像中复现，仍需在装有 DSH 的机器上手动执行。
+
 ## 验证与复现
 
 2026-10-26 补充了直接通过 Codex Computer Use 操作桌面 DSH 0.2.1-rc.3 的
@@ -123,7 +143,10 @@ npm test
 npm run test:integration
 ```
 
-当前 40 项单元测试覆盖授权语句与上下文、引用和否定、预算、并发、预设切换、回合重置、超时、异常兜底与授权选择框（选项、自由输入全文保留、快捷选项附带输入、无应答者、空应答、超时默认继续、关闭开关、结果重放）。
+当前 48 项单元测试（`fast-tuning.test.mjs` 43 项、`authorization.test.mjs` 5 项，含一组四变体参数化用例）
+覆盖授权语句与上下文、引用和否定、预算、并发、预设切换、回合重置、超时、异常兜底与授权选择框
+（选项、自由输入全文保留、快捷选项附带输入、无应答者、空应答、超时默认继续、关闭开关、结果重放），
+以及 1.9.1 新增的超时正文改写、超时与预算分别表述、完整执行不受快速超时影响、授权后上限仍生效。
 `test:integration` 需要本机已安装 `dsh`；它使用临时 DSH_HOME、确定性模型适配器和模拟工具，
 在真实 DSH 提示组装及工具调度中验证执行上限、无工具回答、取消、授权续查与完整执行。
 不连接模型供应商或业务设备，也不修改现有 profile。

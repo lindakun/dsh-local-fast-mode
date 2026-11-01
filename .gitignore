@@ -1,0 +1,13 @@
+# 本插件零运行依赖，node_modules 只在本地调试时可能出现
+node_modules/
+
+# 系统与编辑器
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# 运行与调试产物
+*.log
+coverage/
+dsh-budget-integration-*/
