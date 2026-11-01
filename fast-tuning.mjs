@@ -6,10 +6,16 @@ export const inject = ['agentPresets', 'tools']
 /** 选择框的快捷选项文案；自由输入始终保留，用户不必二选一。 */
 export const GRANT_LABEL = '继续深入'
 export const DECLINE_LABEL = '就此交付'
-const dialogQuestions = timeoutMs => [{
+/** 触发强制回答的原因，决定提示文案；两者都与“批次/次数预算”不是一回事。 */
+export const LIMIT_BUDGET = 'budget'
+export const LIMIT_TIMEOUT = 'timeout'
+const limitTitle = limit => limit === LIMIT_TIMEOUT ? '单次工具执行超时' : '取证预算已用尽'
+const dialogQuestions = (timeoutMs, limit = LIMIT_BUDGET) => [{
   id: DIALOG_QUESTION_ID,
-  header: '取证预算已用尽',
-  question: '本轮取证预算已用尽。要继续深入，还是按现有材料交付？也可以直接输入你的要求。',
+  header: limitTitle(limit),
+  question: limit === LIMIT_TIMEOUT
+    ? '有一次工具调用超过单次执行上限被中止。要继续深入，还是按现有材料交付？也可以直接输入你的要求。'
+    : '本轮取证预算已用尽。要继续深入，还是按现有材料交付？也可以直接输入你的要求。',
   detail: `选择“继续深入”会解除本次工作的取证批次和工具次数限制，完成后再交付；“就此交付”会停止调用工具，只给出已确认结论和未确认疑点。若你另有安排，请在输入框写明，我会按你的文字判断。${Math.round(timeoutMs / 1000)} 秒内无任何响应时，视为你已离开，按“继续深入”自动继续。`,
   options: [
     { label: GRANT_LABEL, description: '解除本次工作的取证批次与工具次数预算，继续完成剩余工作。' },
@@ -54,7 +60,13 @@ export function apply(ctx, config = {}) {
     if (current === preset) return 'brief'
     if (current === fullPreset) return 'full'
   }
-  const exhausted = state => state && !state.authorized && (state.rounds >= maxToolRounds || state.calls >= maxToolCalls || state.timedOut)
+  const exhausted = state => limitOf(state) !== undefined
+  // 超时与批次/次数是两个不同的触发原因；同一状态可能同时满足，超时优先说明，因为它更具体。
+  const limitOf = state => {
+    if (!state || state.authorized) return
+    if (state.timedOut) return LIMIT_TIMEOUT
+    if (state.rounds >= maxToolRounds || state.calls >= maxToolCalls) return LIMIT_BUDGET
+  }
   const reset = agent => { states.delete(agent); if (agent?.session) sessions.delete(agent.session) }
 
   // 选择框只作为可选增强：服务缺失（headless、CLI）时退回原有文本路径，不改变预算语义。
@@ -73,7 +85,7 @@ export function apply(ctx, config = {}) {
   }
 
   /** 询问用户并等待选择；限时阻塞，超时视为用户离开并按继续深入处理。 */
-  const askAuthorization = async (agent, signal) => {
+  const askAuthorization = async (agent, signal, limit = LIMIT_BUDGET) => {
     const service = questionService()
     if (typeof service?.ask !== 'function') return
     if (signal?.aborted) return
@@ -86,7 +98,7 @@ export function apply(ctx, config = {}) {
     try {
       // 服务自身的异常与回合取消都返回 undefined，退回原有强制回答路径，不虚构用户选择。
       const pending = Promise.resolve()
-        .then(() => service.ask({ questions: dialogQuestions(authorizePromptTimeoutMs), agent, signal: controller.signal }))
+        .then(() => service.ask({ questions: dialogQuestions(authorizePromptTimeoutMs, limit), agent, signal: controller.signal }))
         .then(value => ({ value }), () => ({ failed: true }))
       const outcome = await Promise.race([pending, expired])
       if (outcome === EXPIRED) {
@@ -146,7 +158,7 @@ export function apply(ctx, config = {}) {
     if (!state || !exhausted(state)) return assembly
     if (authorizePrompt && !state.prompted && questionService()) {
       state.prompted = true
-      const answer = await askAuthorization(context.scope, context.signal)
+      const answer = await askAuthorization(context.scope, context.signal, limitOf(state))
       if (answer?.choice === 'grant') {
         // 选择本身就是授权：落盘后本次工作不再受批次与次数限制。
         const message = appendChoice(context.scope, answer)
@@ -186,24 +198,26 @@ export function apply(ctx, config = {}) {
       let authorization = authorizationOf(agent)
       for (const message of users) authorization = userAuthorization(authorization, message)
       authorizations.set(agent, authorization)
-      state = { agent, authorized: Boolean(authorization.authorized), rounds: 0, calls: 0, step: 0, lastToolStep: null, finalStarted: false, prompted: false, timedOut: false, justAuthorized: false, defaultAuthorized: false }
+      state = { agent, authorized: Boolean(authorization.authorized), rounds: 0, calls: 0, step: 0, lastToolStep: null, finalStarted: false, finalLimit: null, prompted: false, timedOut: false, justAuthorized: false, defaultAuthorized: false }
       states.set(agent, state)
       sessions.set(agent.session, state)
     }
     if (users.length) state.task = users.flatMap(message => (message.content ?? []).filter(block => block.type === 'text').map(block => block.text)).join('\n').slice(0, 600)
     state.step++
     if (mode === 'brief' && state.finalStarted) {
-      // 异常模型在无工具阶段仍请求工具时不再递归重试；只提供真实的预算说明。
+      // 异常模型在无工具阶段仍请求工具时不再递归重试；只提供真实的停止原因。
       agent.session.append('assistant/message', {
         turn, step: step - 1,
-        message: { id: crypto.randomUUID(), role: 'assistant', source: { kind: 'fast-mode-budget', form: 'notice' }, content: [{ type: 'text', text: '本轮取证预算已用尽，已停止额外操作。模型未能完成最终回答，不能据此判断任务成功。可根据已返回的材料继续，或明确选择完整执行模式。' }] },
+        message: { id: crypto.randomUUID(), role: 'assistant', source: { kind: 'fast-mode-budget', form: 'notice' }, content: [{ type: 'text', text: `${limitTitle(state.finalLimit ?? LIMIT_BUDGET)}，已停止额外操作。模型未能完成最终回答，不能据此判断任务成功。可根据已返回的材料继续，或明确选择完整执行模式。` }] },
       }, { surfaceOp: 'append' })
       return { kind: 'reject' }
     }
     // 选择框已在 system-prompt/assemble 处理；这里只读取结果。
-    const final = mode === 'brief' && exhausted(state)
+    const limit = mode === 'brief' ? limitOf(state) : undefined
+    const final = limit !== undefined
     if (final) {
       state.finalStarted = true
+      state.finalLimit = limit
       authorizations.set(agent, { ...authorizationOf(agent), pending: true })
     }
     // 只在首步、强制回答阶段与刚选择授权时提示，避免每步核查清单诱发反复补证据。
@@ -212,9 +226,11 @@ export function apply(ctx, config = {}) {
     state.justAuthorized = false
     const text = mode === 'full' || state.authorized
       ? `${mode === 'full' ? '当前为完整执行模式。' : state.defaultAuthorized ? '授权选择框已等待超时且无人应答，按继续深入处理。' : justAuthorized ? '用户已通过选择框授权当前工作。' : '用户已明确授权当前工作。'}取证批次和工具次数预算不再限制本次工作。完成授权范围内的实现、深入调查和必要验证，不扩大授权范围；单次工具超时等其他设置保持不变。`
-      : final
-        ? '本轮取证已结束，工具不可用。现在仅回答：已确认结论、关键依据、未知疑点和必要建议。不再请求工具，不补齐全部未知，不宣称已完成未验证事项。需要深入取证的疑点留给用户决定是否继续。'
-        : `当前为快速模式：默认先返回已确认结论。优先取得核心材料并合并独立操作；证据有限就收窄措辞，不为消除疑点递归调查。最多 ${maxToolRounds} 个取证批次、${maxToolCalls} 次工具调用；这是上限，不是目标，能回答就提前交付。未知疑点及继续调查的价值简短列出，等待用户确认。需要创建产物时先写最小可运行版本；已有内容先读取。`
+      : limit === LIMIT_TIMEOUT
+        ? `有一次工具调用超过单次执行上限被中止，工具已不可用。现在仅回答：已确认结论、关键依据、未知疑点和必要建议；不要重发同样耗时的命令，也不要假设尚未返回的结果。需要重新取证的疑点留给用户决定是否继续。`
+        : final
+          ? '本轮取证已结束，工具不可用。现在仅回答：已确认结论、关键依据、未知疑点和必要建议。不再请求工具，不补齐全部未知，不宣称已完成未验证事项。需要深入取证的疑点留给用户决定是否继续。'
+          : `当前为快速模式：默认先返回已确认结论。优先取得核心材料并合并独立操作；证据有限就收窄措辞，不为消除疑点递归调查。最多 ${maxToolRounds} 个取证批次、${maxToolCalls} 次工具调用；这是上限，不是目标，能回答就提前交付。未知疑点及继续调查的价值简短列出，等待用户确认。需要创建产物时先写最小可运行版本；已有内容先读取。`
     return {
       ...decision,
       messages: [...decision.messages, { id: crypto.randomUUID(), role: 'user', source: { kind: 'fast-mode-budget', form: 'notice' }, content: [{ type: 'text', text: state.task ? `${text}\n本回合用户请求摘录（最多 600 字符，完整要求以原消息为准）：\n${state.task}` : text }] }],
@@ -226,12 +242,29 @@ export function apply(ctx, config = {}) {
     const state = states.get(exec.agent)
     if (state?.authorized) return
     if (!state || state.finalStarted || state.timedOut || state.calls >= maxToolCalls || (state.lastToolStep !== state.step && state.rounds >= maxToolRounds)) {
-      return '本轮取证预算已用尽，请输出已确认结论和未确认疑点，等待用户决定是否继续。'
+      return state?.timedOut
+        ? '单次工具执行已超时被中止，请输出已确认结论和未确认疑点：命令本身没有失败，但本次调用没有结果，重发同样耗时的命令会再次超时。'
+        : '本轮取证预算已用尽，请输出已确认结论和未确认疑点，等待用户决定是否继续。'
     }
     // 在任何异步等待之前占用额度，避免同批并发调用突破上限；失败尝试也计数。
     state.calls++
     if (state.lastToolStep !== state.step) { state.rounds++; state.lastToolStep = state.step }
   })
+
+  // 取消原因不会渲染进命令输出：本插件发出的取消必须自己把上限告诉模型，
+  // 否则模型只看到 “Error: tool call aborted”，会继续下同样超时的命令。
+  const timedOutText = (name, ms) => {
+    // 毫秒级配置用于测试，不要渲染成「约 0 秒」。
+    const cap = ms >= 1000 ? `约 ${Math.round(ms / 1000)} 秒` : `仅 ${ms} 毫秒`
+    const budget = Math.max(Math.floor((ms - 5000) / 1000), 1)
+    return [
+      `Error: ${name} command timed out after ${ms}ms.`,
+      `这是快速模式的单次工具上限（toolTimeoutMs=${ms}，${cap}），不是命令失败，也不是用户取消；调大 timeoutMs 或命令自身的 --max-time 不会延长它。`,
+      `重发时把单次调用压到 ${budget} 秒以内：缩短 --max-time、减少 ping/curl 的次数，或把串行测量拆成多次调用。`,
+    ].join('\n')
+  }
+  // 结果只记录“哪个调用被本插件的计时器截断”，避免跨调用串味。
+  const deadlines = new WeakMap()
 
   ctx.on('tools/execute', async (exec, next) => {
     if (modeOf(exec.agent) !== 'brief') return next()
@@ -240,10 +273,29 @@ export function apply(ctx, config = {}) {
     const controller = new AbortController()
     const timer = setTimeout(() => {
       if (state) state.timedOut = true
+      deadlines.set(exec, toolTimeoutMs)
       controller.abort(new Error('快速模式单次工具取证超时，请先交付已有结论'))
     }, toolTimeoutMs)
     exec.signal = AbortSignal.any([original, controller.signal])
     try { return await next() } finally { clearTimeout(timer); exec.signal = original }
+  })
+
+  // DSH 会把“已开始执行后被取消”的成功结果替换成固定的 “Error: tool call aborted”，
+  // 并在 post-execute 之后才做这一步；因此这里只改写失败结果，才不会被覆盖，
+  // 且不影响成功结果、上游错误与用户取消（它们不带本插件记录的上限）。
+  const ABORTED_TEXT = 'Error: tool call aborted'
+  ctx.on('tools/post-execute', async (exec, result, next) => {
+    const decision = await next()
+    if (decision.kind !== 'accept' || !result.isError) return decision
+    const ms = deadlines.get(exec)
+    if (ms === undefined) return decision
+    deadlines.delete(exec)
+    // 只替换 DSH 那条不含信息的取消文案，工具自身抛出的错误正文保持原样。
+    const blocks = result.content ?? []
+    const keep = blocks[0]?.type === 'text' && blocks[0].text === ABORTED_TEXT ? blocks.slice(1) : blocks
+    // 工具自身抛出的错误仍然保留，单独成段，避免和上限说明粘成一行。
+    const text = keep.length > 0 ? `${timedOutText(exec.name, ms)}\n` : timedOutText(exec.name, ms)
+    return { ...decision, content: [{ type: 'text', text }, ...keep] }
   })
 
   ctx.on('agent/request', async (payload, next) => {

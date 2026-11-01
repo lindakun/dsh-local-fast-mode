@@ -420,3 +420,116 @@ test('选择框可关闭，且不影响文本授权路径', async () => {
   const grant = harness({ maxToolCalls: 1 }), g = grant.agent()
   assert.match(notice(await grant.step(g, [grant.user('同意授权')])), /用户已明确授权/)
 })
+
+test('被本插件截断的调用把上限写进结果，而不是只回 aborted', async () => {
+  const h = harness({ toolTimeoutMs: 5 }), agent = h.agent()
+  await h.step(agent); h.call(agent)
+  const controller = new AbortController()
+  const exec = { agent, name: 'bash', signal: controller.signal }
+  const aborted = (prior) => ({ content: [{ type: 'text', text: 'Error: tool call aborted' }], isError: true, error: { message: 'tool call aborted', info: { name: 'AbortError', code: 'ABORTED' } }, ...prior })
+  let seen
+  await h.events.get('tools/execute')(exec, async () => {
+    await new Promise(resolve => exec.signal.addEventListener('abort', resolve, { once: true }))
+    seen = aborted()
+    return seen
+  })
+  const decision = await h.events.get('tools/post-execute')(exec, seen, async () => ({ kind: 'accept' }))
+  assert.equal(decision.kind, 'accept')
+  const text = decision.content[0].text
+  assert.match(text, /timed out after 5ms/)
+  assert.match(text, /不是命令失败，也不是用户取消/)
+  assert.match(text, /压到 1 秒以内/)
+  assert.ok(!decision.content.some(block => block.text === 'Error: tool call aborted'), '不应残留无信息的取消文案')
+})
+
+test('成功结果、工具自身错误与用户取消都不被改写', async () => {
+  const h = harness({ toolTimeoutMs: 5 }), agent = h.agent()
+  await h.step(agent); h.call(agent)
+  const run = async (exec, finish) => {
+    const result = await h.events.get('tools/execute')(exec, finish)
+    return { result, decision: await h.events.get('tools/post-execute')(exec, result, async () => ({ kind: 'accept' })) }
+  }
+  const ok = { content: [{ type: 'text', text: '正常结果' }], isError: false }
+  const fine = await run({ agent, name: 'bash', signal: new AbortController().signal }, async () => ok)
+  assert.equal(fine.decision.content, undefined, '成功结果不应被替换内容')
+
+  const failure = { content: [{ type: 'text', text: 'Error: 命令自身失败' }], isError: true, error: { message: '命令自身失败' } }
+  const thrown = await run({ agent, name: 'bash', signal: new AbortController().signal }, async () => failure)
+  assert.equal(thrown.decision.content, undefined, '工具自身错误不应被改写成超时')
+
+  // 用户取消：计时器还没到，只有调用方的信号中止，不带本插件记录的上限。
+  const caller = new AbortController()
+  const cancelled = await run({ agent, name: 'bash', signal: caller.signal }, async () => {
+    caller.abort()
+    return { content: [{ type: 'text', text: 'Error: tool call aborted' }], isError: true, error: { message: 'tool call aborted' } }
+  })
+  assert.equal(cancelled.decision.content, undefined, '用户取消不应被说成快速模式超时')
+})
+
+test('完整执行模式不使用快速超时，也不改写结果', async () => {
+  const h = harness({ toolTimeoutMs: 1 }), agent = h.agent('fast-full')
+  const exec = { agent, name: 'bash', signal: new AbortController().signal }
+  const original = exec.signal
+  await h.events.get('tools/execute')(exec, async () => { assert.equal(exec.signal, original) })
+  const failure = { content: [{ type: 'text', text: 'Error: tool call aborted' }], isError: true, error: { message: 'tool call aborted' } }
+  const decision = await h.events.get('tools/post-execute')(exec, failure, async () => ({ kind: 'accept' }))
+  assert.equal(decision.content, undefined)
+})
+
+test('超时与预算用不同文案，不把超时说成预算耗尽', async () => {
+  const h = harness({ toolTimeoutMs: 5 }), agent = h.agent()
+  await h.step(agent); h.call(agent)
+  const exec = { agent, name: 'bash', signal: new AbortController().signal }
+  await h.events.get('tools/execute')(exec, async () => {
+    await new Promise(resolve => exec.signal.addEventListener('abort', resolve, { once: true }))
+    return { content: [{ type: 'text', text: 'Error: tool call aborted' }], isError: true }
+  })
+  const answer = await h.step(agent)
+  assert.doesNotMatch(notice(answer), /本轮取证预算已结束|取证预算/, '超时不应说成预算耗尽')
+  assert.match(notice(answer), /单次执行上限/)
+  assert.match(h.call(agent), /单次工具执行已超时/, 'guard 不应回预算文案')
+})
+
+test('预算是预算、超时是超时，各自独立触发且文案不混用', async () => {
+  const h = harness(), agent = h.agent()
+  for (let i = 0; i < 10; i++) { await h.step(agent); h.call(agent); h.call(agent) }
+  const answer = await h.step(agent)
+  assert.match(notice(answer), /本轮取证已结束/)
+  assert.match(h.call(agent), /本轮取证预算已用尽/)
+})
+
+test('选择框标题按真实触发原因区分', async () => {
+  const byBudget = harness({ maxToolCalls: 1 }), a = byBudget.agent()
+  await byBudget.step(a); byBudget.call(a)
+  await byBudget.assemble(a, { tools: [{ name: 'inspect' }] })
+  assert.equal(byBudget.asked.at(-1).questions[0].header, '取证预算已用尽')
+
+  const byTimeout = harness({ toolTimeoutMs: 5 }), b = byTimeout.agent()
+  await byTimeout.step(b); byTimeout.call(b)
+  const exec = { agent: b, name: 'bash', signal: new AbortController().signal }
+  await byTimeout.events.get('tools/execute')(exec, async () => {
+    await new Promise(resolve => exec.signal.addEventListener('abort', resolve, { once: true }))
+    return { content: [{ type: 'text', text: 'Error: tool call aborted' }], isError: true }
+  })
+  await byTimeout.assemble(b, { tools: [{ name: 'inspect' }] })
+  assert.equal(byTimeout.asked.at(-1).questions[0].header, '单次工具执行超时')
+})
+
+test('授权后三十秒上限仍然生效，且仍把上限写给模型', async () => {
+  const h = harness({ toolTimeoutMs: 5 }), agent = h.agent()
+  // 明确授权语句 → authorized
+  const first = await h.step(agent, [h.user('开始实施并完成必要验证')])
+  assert.match(notice(first), /用户已明确授权/)
+  const exec = { agent, name: 'bash', signal: new AbortController().signal }
+  let abortedAt = null
+  const started = Date.now()
+  const result = await h.events.get('tools/execute')(exec, async () => {
+    await new Promise(resolve => exec.signal.addEventListener('abort', resolve, { once: true }))
+    abortedAt = Date.now() - started
+    return { content: [{ type: 'text', text: 'Error: tool call aborted' }], isError: true }
+  })
+  assert.ok(abortedAt !== null, '授权后计时器不应失效')
+  const decision = await h.events.get('tools/post-execute')(exec, result, async () => ({ kind: 'accept' }))
+  assert.match(decision.content[0].text, /timed out after 5ms/, '授权后仍应写明上限')
+  assert.equal(h.call(agent), undefined, '授权后不因超时拒绝后续调用')
+})
