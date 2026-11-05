@@ -1,4 +1,5 @@
 /** 快速模式限制取证预算，完整执行模式保留必要工作；均通过公开接口生效。 */
+import { createHash } from 'node:crypto'
 import { userAuthorization, replyAuthorization, dialogAuthorization, DIALOG_SOURCE, DIALOG_FORM, DIALOG_QUESTION_ID } from './authorization.mjs'
 export const name = 'fast-mode-tuning'
 export const inject = ['agentPresets', 'tools']
@@ -9,6 +10,23 @@ export const DECLINE_LABEL = '就此交付'
 /** 触发强制回答的原因，决定提示文案；两者都与“批次/次数预算”不是一回事。 */
 export const LIMIT_BUDGET = 'budget'
 export const LIMIT_TIMEOUT = 'timeout'
+/**
+ * 空转提示：判据是“连续多批没有拿到新信息”，不是“有没有写过文件”。
+ * 排查/分析类任务每批都有新证据，永远不会命中；反复查同一处、命令原地打转才会命中。
+ * 只提示、不拒绝工具：误判的代价只是多一句话，而不是逼模型造一个无用文件来解锁。
+ */
+export const STALL_TEXT = rounds => `最近 ${rounds} 批工具调用没有获得新信息（结果与上一批重复，或内容近乎为空）。如果当前是产出型任务，请先把最小可运行版本写入磁盘再继续；如果这是排查或分析任务，忽略本条提示，按计划继续取证即可。工具不会被限制。`
+/**
+ * 结果签名只取“内容有没有变化”，不读模型自述、也不判断任务类型。
+ * 同一条命令重复跑、空结果、被截断回到同一段文本，都会得到同一签名。
+ */
+export const resultSignature = message => {
+  const text = (message?.content ?? []).filter(block => block?.type === 'text').map(block => block.text).join('\n').slice(0, 512)
+  return `${message?.isError === true ? 'E' : 'O'}:${createHash('sha1').update(text).digest('hex')}`
+}
+/** 合法思考档位，仅用于校验配置；快速模式不靠降档省时间，保留用户显式选择。 */
+export const EFFORTS = ['off', 'none', 'minimal', 'low', 'medium', 'high', 'max']
+const rankOf = value => (typeof value === 'string' && EFFORTS.includes(value.toLowerCase()) ? value : undefined)
 const limitTitle = limit => limit === LIMIT_TIMEOUT ? '单次工具执行超时' : '取证预算已用尽'
 const dialogQuestions = (timeoutMs, limit = LIMIT_BUDGET) => [{
   id: DIALOG_QUESTION_ID,
@@ -29,15 +47,22 @@ export function apply(ctx, config = {}) {
   const fullPreset = config.fullPreset ?? 'fast-full'
   const effort = config.reasoningEffort ?? 'low'
   const maxTokens = config.maxTokens
+  // 单次请求输出预算的硬顶：快速模式只在更省时才生效，完整执行模式不设。
+  const maxOutputTokens = config.maxOutputTokens
+  // 空转检测：连续这么多批工具调用都没有新信息时，追加一条软提示。
+  // 只发提示、不拒绝工具；默认 3 批，设为 0 可关闭。
+  const stallRounds = config.stallRounds ?? 3
   const maxToolRounds = config.maxToolRounds ?? 10
   const maxToolCalls = config.maxToolCalls ?? 20
   const toolTimeoutMs = config.toolTimeoutMs ?? 30000
   const authorizePrompt = config.authorizePrompt ?? true
   // 限时阻塞：窗口打开后最多等这么久。无响应对应“用户离开”，按继续深入处理，不再一直挂着。
   const authorizePromptTimeoutMs = config.authorizePromptTimeoutMs ?? 10000
-  for (const [key, value] of Object.entries({ maxToolRounds, maxToolCalls, toolTimeoutMs, authorizePromptTimeoutMs, ...(maxTokens == null ? {} : { maxTokens }) })) {
+  for (const [key, value] of Object.entries({ maxToolRounds, maxToolCalls, toolTimeoutMs, authorizePromptTimeoutMs, ...(maxTokens == null ? {} : { maxTokens }), ...(maxOutputTokens == null ? {} : { maxOutputTokens }) })) {
     if (!Number.isSafeInteger(value) || value <= 0) throw new RangeError(`${key} 必须为正整数`)
   }
+  if (!Number.isSafeInteger(stallRounds) || stallRounds < 0) throw new RangeError('stallRounds 必须为非负整数')
+  if (rankOf(effort) === undefined) throw new RangeError(`reasoningEffort 必须是 ${EFFORTS.join('、')} 之一`)
   if (preset === fullPreset) throw new RangeError('快速模式与完整执行模式的预设 ID 不能相同')
   const states = new WeakMap()
   const sessions = new WeakMap()
@@ -136,6 +161,18 @@ export function apply(ctx, config = {}) {
       state.rounds++
       state.lastToolStep = state.step
     }
+    // 空转检测：只比较“这批结果与上批是否一样”，不判断任务类型。
+    // 排查/分析任务每批都拿到新证据，签名必然变化，因此永远不会被误判。
+    if (state && event.type === 'tool/result' && event.data?.message) {
+      const signature = resultSignature(event.data.message)
+      if (signature === state.lastSignature) {
+        state.stallStreak++
+        if (stallRounds > 0 && state.stallStreak >= stallRounds) state.stall = true
+      } else {
+        state.stallStreak = 0
+        state.lastSignature = signature
+      }
+    }
   })
 
   // 入队时重置，确保新用户请求在提示组装前恢复工具；通知和工具结果不重置预算。
@@ -198,7 +235,7 @@ export function apply(ctx, config = {}) {
       let authorization = authorizationOf(agent)
       for (const message of users) authorization = userAuthorization(authorization, message)
       authorizations.set(agent, authorization)
-      state = { agent, authorized: Boolean(authorization.authorized), rounds: 0, calls: 0, step: 0, lastToolStep: null, finalStarted: false, finalLimit: null, prompted: false, timedOut: false, justAuthorized: false, defaultAuthorized: false }
+      state = { agent, authorized: Boolean(authorization.authorized), rounds: 0, calls: 0, step: 0, lastToolStep: null, finalStarted: false, finalLimit: null, prompted: false, timedOut: false, justAuthorized: false, defaultAuthorized: false, lastSignature: null, stallStreak: 0, stallNotified: false }
       states.set(agent, state)
       sessions.set(agent.session, state)
     }
@@ -220,6 +257,15 @@ export function apply(ctx, config = {}) {
       state.finalLimit = limit
       authorizations.set(agent, { ...authorizationOf(agent), pending: true })
     }
+    // 空转提示：只发一句话，不拒绝工具。命中后清标记，避免每步重复催促。
+    if (state.stall && !final && !state.authorized && !state.stallNotified) {
+      state.stall = false
+      state.stallNotified = true
+      return {
+        ...decision,
+        messages: [...decision.messages, { id: crypto.randomUUID(), role: 'user', source: { kind: 'fast-mode-budget', form: 'notice' }, content: [{ type: 'text', text: STALL_TEXT(stallRounds) }] }],
+      }
+    }
     // 只在首步、强制回答阶段与刚选择授权时提示，避免每步核查清单诱发反复补证据。
     if (state.step !== 1 && !final && !state.justAuthorized) return decision
     const justAuthorized = state.justAuthorized
@@ -230,7 +276,7 @@ export function apply(ctx, config = {}) {
         ? `有一次工具调用超过单次执行上限被中止，工具已不可用。现在仅回答：已确认结论、关键依据、未知疑点和必要建议；不要重发同样耗时的命令，也不要假设尚未返回的结果。需要重新取证的疑点留给用户决定是否继续。`
         : final
           ? '本轮取证已结束，工具不可用。现在仅回答：已确认结论、关键依据、未知疑点和必要建议。不再请求工具，不补齐全部未知，不宣称已完成未验证事项。需要深入取证的疑点留给用户决定是否继续。'
-          : `当前为快速模式：默认先返回已确认结论。优先取得核心材料并合并独立操作；证据有限就收窄措辞，不为消除疑点递归调查。最多 ${maxToolRounds} 个取证批次、${maxToolCalls} 次工具调用；这是上限，不是目标，能回答就提前交付。未知疑点及继续调查的价值简短列出，等待用户确认。需要创建产物时先写最小可运行版本；已有内容先读取。`
+          : `当前为快速模式：默认先返回已确认结论。优先取得核心材料并合并独立操作；证据有限就收窄措辞，不为消除疑点递归调查。最多 ${maxToolRounds} 个取证批次、${maxToolCalls} 次工具调用；这是上限，不是目标，能回答就提前交付。未知疑点及继续调查的价值简短列出，等待用户确认。需要创建产物时先写最小可运行版本；已有内容先读取。（思考档位按你的选择保留，空转由单步输出预算和先落盘约束。）`
     return {
       ...decision,
       messages: [...decision.messages, { id: crypto.randomUUID(), role: 'user', source: { kind: 'fast-mode-budget', form: 'notice' }, content: [{ type: 'text', text: state.task ? `${text}\n本回合用户请求摘录（最多 600 字符，完整要求以原消息为准）：\n${state.task}` : text }] }],
@@ -298,12 +344,16 @@ export function apply(ctx, config = {}) {
     return { ...decision, content: [{ type: 'text', text }, ...keep] }
   })
 
+  // 快速模式压住空转不靠降档：思考档位保留用户选择（含 high），只用单步输出预算约束单次请求体量。
+  // 完整执行模式用于长实现，不设上限，避免把必要的长输出截断。
   ctx.on('agent/request', async (payload, next) => {
     const resolved = await next()
-    if (!modeOf(payload?.agent)) return resolved
+    const mode = modeOf(payload?.agent)
+    if (!mode) return resolved
     const result = { ...resolved }
     if (result.reasoningEffort == null) result.reasoningEffort = effort
-    if (result.maxTokens == null && maxTokens != null) result.maxTokens = maxTokens
+    if (mode === 'brief' && maxOutputTokens != null && (result.maxTokens == null || result.maxTokens > maxOutputTokens)) result.maxTokens = maxOutputTokens
+    else if (result.maxTokens == null && maxTokens != null) result.maxTokens = maxTokens
     return result
   })
 }

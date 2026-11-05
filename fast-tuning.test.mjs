@@ -8,6 +8,7 @@ function harness(config = {}) {
   const asked = []
   let answer
   let hanging = false
+  let callSeq = 0
   apply({
     agentPresets: { composedPreset: agentCtx => agentCtx.preset },
     tools: { guard(callback) { guard = callback } },
@@ -28,15 +29,18 @@ function harness(config = {}) {
     reply(value) { answer = value },
     hang() { hanging = true },
     step: (subject, messages = [], step = 1) => events.get('agent/pre-step')({ agent: subject, messages, turn: 1, step, signal: new AbortController().signal }, async () => decision),
-    call: (subject, name = 'inspect', args = {}) => guard({ agent: subject, name, arguments: args }),
+    call: (subject, name = 'inspect', args = {}) => guard({ agent: subject, name, arguments: args, callId: `call_${++callSeq}` }),
+    result: (subject, callId, isError = false, text = '') => events.get('session/event')(subject.session, { type: 'tool/result', data: { message: { toolCallId: callId, isError, content: [{ type: 'text', text }] } } }),
     request: (subject, selection) => events.get('agent/request')({ agent: subject }, async () => selection),
     assemble: (subject, assembly) => events.get('system-prompt/assemble')(assembly, { scope: subject }, async () => assembly),
   }
 }
 const notice = result => result.messages.at(-1).content[0].text
+// 空转提示可能缺席（无提示时 pre-step 原样返回 decision），单独判断避免读空。
+const stalled = result => (result.messages ?? []).some(message => (message.content?.[0]?.text ?? '').includes('没有获得新信息'))
 
 test('显式档位与输出预算保留，默认只补 low', async () => {
-  const h = harness(), agent = h.agent()
+  const h = harness(), agent = h.agent('fast-full')
   for (const reasoningEffort of ['off', 'low', 'high', 'max']) {
     for (const maxTokens of [1024, 32768]) {
       const input = { provider: 'example', model: 'example', reasoningEffort, maxTokens }
@@ -46,14 +50,43 @@ test('显式档位与输出预算保留，默认只补 low', async () => {
   assert.deepEqual(await h.request(agent, { model: 'example' }), { model: 'example', reasoningEffort: 'low' })
 })
 
+test('快速模式保留 high 等显式档位，只补缺省值', async () => {
+  const h = harness({ maxOutputTokens: 8192 }), agent = h.agent()
+  for (const reasoningEffort of ['off', 'low', 'medium', 'high', 'max', 'HIGH', 'unknown-tier']) {
+    assert.equal((await h.request(agent, { reasoningEffort })).reasoningEffort, reasoningEffort, `档位 ${reasoningEffort} 不应被改写`)
+  }
+  assert.equal((await h.request(agent, { model: 'example' })).reasoningEffort, 'low')
+  // 只改输出预算，其余请求字段（含档位）原样透传。
+  const streaming = { model: 'example', reasoningEffort: 'high', maxTokens: 32768, stream: true }
+  assert.deepEqual(await h.request(agent, streaming), { model: 'example', reasoningEffort: 'high', maxTokens: 8192, stream: true })
+})
+
+test('完整执行模式不设输出上限，档位与预算均原样保留', async () => {
+  const h = harness({ maxOutputTokens: 8192 }), agent = h.agent('fast-full')
+  assert.equal((await h.request(agent, { reasoningEffort: 'high' })).reasoningEffort, 'high')
+  assert.equal((await h.request(agent, { maxTokens: 64000 })).maxTokens, 64000)
+  assert.deepEqual(await h.request(agent, {}), { reasoningEffort: 'low' })
+  assert.deepEqual(await h.request(agent, { reasoningEffort: 'max', maxTokens: 131072 }), { reasoningEffort: 'max', maxTokens: 131072 })
+})
+
+test('maxOutputTokens 只收窄不抬高，快速模式与完整执行模式都受约束', async () => {
+  const h = harness({ maxOutputTokens: 8192 }), agent = h.agent()
+  assert.equal((await h.request(agent, {})).maxTokens, 8192)
+  assert.equal((await h.request(agent, { maxTokens: 64000 })).maxTokens, 8192)
+  // 模型或用户要得更省时不抬回去。
+  assert.equal((await h.request(agent, { maxTokens: 1024 })).maxTokens, 1024)
+})
+
 test('可选 maxTokens 只补缺省值，配置必须为正整数', async () => {
   const h = harness({ maxTokens: 8192 }), agent = h.agent()
   assert.equal((await h.request(agent, {})).maxTokens, 8192)
   assert.equal((await h.request(agent, { maxTokens: 1024 })).maxTokens, 1024)
-  for (const key of ['maxTokens', 'maxToolRounds', 'maxToolCalls', 'toolTimeoutMs']) {
+  for (const key of ['maxTokens', 'maxOutputTokens', 'maxToolRounds', 'maxToolCalls', 'toolTimeoutMs']) {
     for (const value of [0, -1, 1.5, NaN, '10']) assert.throws(() => harness({ [key]: value }), RangeError)
   }
   assert.throws(() => harness({ fullPreset: 'fast' }), RangeError)
+  assert.throws(() => harness({ reasoningEffort: '' }), RangeError)
+  assert.throws(() => harness({ reasoningEffort: 'extreme' }), RangeError)
 })
 
 test('其他预设和缺少 agent 不受影响，上游错误保持原样', async () => {
@@ -532,4 +565,75 @@ test('授权后三十秒上限仍然生效，且仍把上限写给模型', async
   const decision = await h.events.get('tools/post-execute')(exec, result, async () => ({ kind: 'accept' }))
   assert.match(decision.content[0].text, /timed out after 5ms/, '授权后仍应写明上限')
   assert.equal(h.call(agent), undefined, '授权后不因超时拒绝后续调用')
+})
+
+test('空转提示：结果没有变化时提示一次，但从不拒绝工具', async () => {
+  const h = harness({ stallRounds: 3 }), agent = h.agent()
+  const same = 'INFO same log line'
+  await h.step(agent, [h.user('扫描日志')])
+  // 首个结果建立基线，之后每重复一次累加连击；达阈值才提示。
+  await h.result(agent, 'call_1', false, same)
+  for (const round of [2, 3]) {
+    await h.result(agent, `call_${round}`, false, same)
+    assert.equal(stalled(await h.step(agent)), false, `第 ${round} 批未达阈值不提示`)
+    assert.equal(h.call(agent, 'bash'), undefined)
+  }
+  await h.result(agent, 'call_4', false, same)
+  const text = notice(await h.step(agent))
+  assert.match(text, /没有获得新信息/)
+  assert.match(text, /工具不会被限制/)
+  // 提示归软：命中后探测类工具依然放行。
+  assert.equal(h.call(agent, 'bash'), undefined, '空转只提示，不拦截工具')
+  // 同一回合不重复催促。
+  await h.result(agent, 'call_5', false, same)
+  assert.equal(stalled(await h.step(agent)), false, '同一回合只提示一次')
+})
+
+test('空转提示：排查型任务每批都有新证据，永远不触发', async () => {
+  const h = harness({ stallRounds: 2 }), agent = h.agent()
+  await h.step(agent, [h.user('扫描日志')])
+  for (let round = 1; round <= 6; round++) {
+    await h.result(agent, `call_${round}`, false, `log line ${round}`)
+    assert.equal(stalled(await h.step(agent)), false, `第 ${round} 批是新信息，不应提示`)
+    assert.equal(h.call(agent, 'bash'), undefined, '排查任务不被限制')
+  }
+})
+
+test('空转提示：授权后、完整执行模式与 stallRounds=0 都不提示', async () => {
+  const authorized = harness({ stallRounds: 1 }), agent = authorized.agent()
+  await authorized.step(agent, [authorized.user('开始实施')])
+  for (let round = 1; round <= 4; round++) {
+    await authorized.result(agent, `call_${round}`, false, 'same')
+    assert.equal(stalled(await authorized.step(agent)), false, '已授权不催促')
+  }
+  const full = harness({ stallRounds: 1 }), fullAgent = full.agent('fast-full')
+  await full.step(fullAgent, [full.user('开始实施')])
+  for (let round = 1; round <= 4; round++) {
+    await full.result(fullAgent, `call_${round}`, false, 'same')
+    assert.equal(stalled(await full.step(fullAgent)), false, '完整执行模式不催促')
+  }
+  const off = harness({ stallRounds: 0 }), offAgent = off.agent()
+  await off.step(offAgent, [off.user('扫描日志')])
+  for (let round = 1; round <= 5; round++) {
+    await off.result(offAgent, `call_${round}`, false, 'same')
+    assert.equal(stalled(await off.step(offAgent)), false, 'stallRounds=0 视为关闭')
+  }
+})
+
+test('空转提示：新用户请求重置连击计数', async () => {
+  const h = harness({ stallRounds: 2 }), agent = h.agent()
+  await h.step(agent, [h.user('扫描日志')])
+  // 首个结果只建立基线，之后两次重复才凑够 stallRounds=2。
+  await h.result(agent, 'call_1', false, 'same')
+  await h.result(agent, 'call_2', false, 'same')
+  await h.result(agent, 'call_3', false, 'same')
+  assert.equal(stalled(await h.step(agent)), true)
+  const reset = await h.step(agent, [h.user('换个任务')])
+  assert.equal(stalled(reset), false, '新请求不继承上一轮的连击')
+})
+
+test('空转提示配置校验', async () => {
+  for (const value of [-1, 1.5, NaN, '3']) assert.throws(() => harness({ stallRounds: value }), RangeError)
+  assert.doesNotThrow(() => harness({ stallRounds: 0 }))
+  assert.doesNotThrow(() => harness({ stallRounds: 1 }))
 })
