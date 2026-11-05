@@ -11,3 +11,6 @@ node_modules/
 *.log
 coverage/
 dsh-budget-integration-*/
+
+# 本地会话跟踪草稿：结论已并入 README，留档但不分发
+tracking-*.md

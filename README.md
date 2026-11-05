@@ -170,10 +170,14 @@ npm test
 npm run test:integration
 ```
 
-当前 48 项单元测试（`fast-tuning.test.mjs` 43 项、`authorization.test.mjs` 5 项，含一组四变体参数化用例）
+当前 56 项单元测试（`fast-tuning.test.mjs` 51 项、`authorization.test.mjs` 5 项，含一组四变体参数化用例）
 覆盖授权语句与上下文、引用和否定、预算、并发、预设切换、回合重置、超时、异常兜底与授权选择框
 （选项、自由输入全文保留、快捷选项附带输入、无应答者、空应答、超时默认继续、关闭开关、结果重放），
 以及 1.9.x 系列新增的超时正文改写、超时与预算分别表述、完整执行不受快速超时影响、授权后上限仍生效。
+2.0.0 之后补充了思考档位的取舍用例：快速模式保留 `high`/`max` 等显式档位不被改写、
+仅在缺省时补 `reasoningEffort`，以及 `maxOutputTokens` 只收窄不抬高、且只作用于快速模式。
+另含空转提示的五个用例：结果重复才提示且不拒绝工具、排查型任务从不命中、
+授权后与完整执行模式不提示、新请求重置连击、以及 `stallRounds` 的配置校验。
 `test:integration` 需要本机已安装 `dsh`；它使用临时 DSH_HOME、确定性模型适配器和模拟工具，
 在真实 DSH 提示组装及工具调度中验证执行上限、无工具回答、取消、授权续查与完整执行。
 不连接模型供应商或业务设备，也不修改现有 profile。
@@ -193,7 +197,11 @@ npm run test:integration
 不构成默认预算的生产性能或全面事实准确性证明。
 1.9.x 的接口兼容性已在 DSH 0.2.0-rc.2 上验证通过：`agentPresets.composedPreset`、
 `system-prompt/assemble`、`tools.guard`、`ctx.userQuestions.ask` 与工具取消接口在该版本均按预期工作。
-2.0.0 未改动这些接口的用法，只调整版本号与仓库工程文件，因此没有在该版本上重跑集成检查。
+2.0.0 未改动这些接口的用法，只调整版本号与仓库工程文件。
+2026-11-05 在 DSH 0.2.0-rc.2 上重跑了这套集成检查，十九项全部通过
+（`maxOutputTokens` 与 `stallRounds` 属新增配置，前者只在 `agent/request` 出口收窄 `maxTokens`，
+后者只读 `tool/result` 生成提示，均未改变上表接口的调用方式；但这两项**没有**对应的集成场景，
+只由单元测试覆盖）。
 
 历史记录 `verification.json`、`verification-creative.json`、`verification-scope.json`
 保留旧版的收益与失败证据，不代表本版性能。未发布的 1.5 候选曾增加证据核查规则，
