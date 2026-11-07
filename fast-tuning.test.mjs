@@ -18,10 +18,18 @@ function harness(config = {}) {
       return { async ask(request) { asked.push(request); return hanging ? new Promise(() => {}) : answer } }
     },
   }, config)
-  const agent = (preset = 'fast', header = preset) => ({
-    ctx: { preset },
-    session: { header: Object.freeze({ agentPreset: header }), records: [], log: [], append(...args) { this.records.push(args) } },
-  })
+  const agent = (preset = 'fast', header = preset) => {
+    // 会话里记录的模型选择：select() 追加一条 model/selection，current() 读最新值。
+    let selection = { provider: 'example', model: 'example' }
+    return {
+      ctx: { preset },
+      session: { header: Object.freeze({ agentPreset: header }), records: [], log: [], append(...args) { this.records.push(args) } },
+      model: {
+        current: () => (selection === undefined ? undefined : { ...selection }),
+        select(next) { selection = next; this.selections?.push(next) },
+      },
+    }
+  }
   const user = text => ({ source: { kind: 'user' }, content: [{ type: 'text', text }] })
   const decision = { kind: 'enter', messages: [] }
   return {
@@ -29,6 +37,7 @@ function harness(config = {}) {
     reply(value) { answer = value },
     hang() { hanging = true },
     step: (subject, messages = [], step = 1) => events.get('agent/pre-step')({ agent: subject, messages, turn: 1, step, signal: new AbortController().signal }, async () => decision),
+    created: subject => events.get('agent/created')({ agent: subject }),
     call: (subject, name = 'inspect', args = {}) => guard({ agent: subject, name, arguments: args, callId: `call_${++callSeq}` }),
     result: (subject, callId, isError = false, text = '') => events.get('session/event')(subject.session, { type: 'tool/result', data: { message: { toolCallId: callId, isError, content: [{ type: 'text', text }] } } }),
     request: (subject, selection) => events.get('agent/request')({ agent: subject }, async () => selection),
@@ -39,7 +48,7 @@ const notice = result => result.messages.at(-1).content[0].text
 // 空转提示可能缺席（无提示时 pre-step 原样返回 decision），单独判断避免读空。
 const stalled = result => (result.messages ?? []).some(message => (message.content?.[0]?.text ?? '').includes('没有获得新信息'))
 
-test('显式档位与输出预算保留，默认只补 low', async () => {
+test('请求钩子不再改写思考档位，显式档位与输出预算原样透传', async () => {
   const h = harness(), agent = h.agent('fast-full')
   for (const reasoningEffort of ['off', 'low', 'high', 'max']) {
     for (const maxTokens of [1024, 32768]) {
@@ -47,15 +56,16 @@ test('显式档位与输出预算保留，默认只补 low', async () => {
       assert.deepEqual(await h.request(agent, input), input)
     }
   }
-  assert.deepEqual(await h.request(agent, { model: 'example' }), { model: 'example', reasoningEffort: 'low' })
+  // 档位由 agent.model.select() 在步骤准备前声明；请求钩子不得在此追加或清除它。
+  assert.deepEqual(await h.request(agent, { model: 'example' }), { model: 'example' })
 })
 
-test('快速模式保留 high 等显式档位，只补缺省值', async () => {
+test('快速模式保留 high 等显式档位，且不补缺省值', async () => {
   const h = harness({ maxOutputTokens: 8192 }), agent = h.agent()
   for (const reasoningEffort of ['off', 'low', 'medium', 'high', 'max', 'HIGH', 'unknown-tier']) {
     assert.equal((await h.request(agent, { reasoningEffort })).reasoningEffort, reasoningEffort, `档位 ${reasoningEffort} 不应被改写`)
   }
-  assert.equal((await h.request(agent, { model: 'example' })).reasoningEffort, 'low')
+  assert.equal((await h.request(agent, { model: 'example' })).reasoningEffort, undefined)
   // 只改输出预算，其余请求字段（含档位）原样透传。
   const streaming = { model: 'example', reasoningEffort: 'high', maxTokens: 32768, stream: true }
   assert.deepEqual(await h.request(agent, streaming), { model: 'example', reasoningEffort: 'high', maxTokens: 8192, stream: true })
@@ -65,8 +75,31 @@ test('完整执行模式不设输出上限，档位与预算均原样保留', as
   const h = harness({ maxOutputTokens: 8192 }), agent = h.agent('fast-full')
   assert.equal((await h.request(agent, { reasoningEffort: 'high' })).reasoningEffort, 'high')
   assert.equal((await h.request(agent, { maxTokens: 64000 })).maxTokens, 64000)
-  assert.deepEqual(await h.request(agent, {}), { reasoningEffort: 'low' })
+  assert.deepEqual(await h.request(agent, {}), {})
   assert.deepEqual(await h.request(agent, { reasoningEffort: 'max', maxTokens: 131072 }), { reasoningEffort: 'max', maxTokens: 131072 })
+})
+
+test('默认档位在 agent/created 时用 agent.model.select 声明', async () => {
+  const h = harness({ reasoningEffort: 'medium' })
+  const brief = h.agent(), full = h.agent('fast-full'), other = h.agent('standard')
+  for (const agent of [brief, full, other]) await h.created(agent)
+  assert.deepEqual(brief.model.current(), { provider: 'example', model: 'example', reasoningEffort: 'medium' })
+  assert.deepEqual(full.model.current(), { provider: 'example', model: 'example', reasoningEffort: 'medium' })
+  // 其他预设不受影响。
+  assert.deepEqual(other.model.current(), { provider: 'example', model: 'example' })
+})
+
+test('用户已显式选档时 agent/created 不覆盖，缺档位时才补默认值', async () => {
+  const h = harness({ reasoningEffort: 'low' })
+  const agent = h.agent()
+  agent.model.select({ provider: 'example', model: 'example', reasoningEffort: 'high' })
+  await h.created(agent)
+  assert.deepEqual(agent.model.current(), { provider: 'example', model: 'example', reasoningEffort: 'high' })
+  // 没有选择结果的会话（无 provider/model）不写入半份 selection。
+  const empty = h.agent()
+  empty.model.current = () => undefined
+  await h.created(empty)
+  assert.equal(empty.model.current(), undefined)
 })
 
 test('maxOutputTokens 只收窄不抬高，快速模式与完整执行模式都受约束', async () => {

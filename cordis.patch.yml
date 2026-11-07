@@ -66,6 +66,9 @@
             name: dsh-local-fast-mode/tuning
             config:
               preset: fast
+              # 默认思考档位：在 agent/created 时用 agent.model.select() 声明，
+              # 只在用户没有显式档位时生效。不要改成在 agent/request 里改写，
+              # 那会被步骤准备后的 selection 断言拒绝并中断该步。
               reasoningEffort: low
               maxOutputTokens: 16000
               # 空转提示：连续 N 批工具结果与上一批完全相同时，追加一句软提示（不拒绝工具）。

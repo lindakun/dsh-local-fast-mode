@@ -185,6 +185,17 @@ export function apply(ctx, config = {}) {
   ctx.on('agent/status', ({ agent, status }) => { if (status === 'idle') reset(agent) })
   ctx.on('agent/disposed', ({ agent }) => { reset(agent); authorizations.delete(agent) })
 
+  // 思考档位只能在步骤准备之前用 agent.model.select() 声明：运行时会把它冻结进本步的
+  // selection，之后 agent/request 钩子再改写同一个字段会被断言拒绝并中断该步。
+  // 因此这里在模型初始化时补一次默认档位，只在用户没有显式档位时生效；
+  // 用户之后在界面显式选档会写入新的 model/selection，本插件不会覆盖。
+  ctx.on('agent/created', ({ agent }) => {
+    if (!modeOf(agent)) return
+    const current = agent?.model?.current?.()
+    if (current == null || current.reasoningEffort != null) return
+    agent.model.select({ ...current, reasoningEffort: effort })
+  })
+
   // 组装结果会由 DSH 正常记录；不在供应商请求出口静默改写工具清单。
   // 选择框必须在这里问：system-prompt/assemble 先于 agent/pre-step 执行，
   // 若在 pre-step 才授权，本步的工具清单已经按耗尽状态移除，无法在同一回合继续。
@@ -344,14 +355,15 @@ export function apply(ctx, config = {}) {
     return { ...decision, content: [{ type: 'text', text }, ...keep] }
   })
 
-  // 快速模式压住空转不靠降档：思考档位保留用户选择（含 high），只用单步输出预算约束单次请求体量。
+  // 请求钩子只调整输出预算。思考档位属于步骤准备时冻结的 selection：
+  // 在这里事后改写 reasoningEffort 会被运行时的断言直接拒绝并中断该步骤，
+  // 因此档位一律走上方的 agent.model.select()，不进入这个 waterfall。
   // 完整执行模式用于长实现，不设上限，避免把必要的长输出截断。
   ctx.on('agent/request', async (payload, next) => {
     const resolved = await next()
     const mode = modeOf(payload?.agent)
     if (!mode) return resolved
     const result = { ...resolved }
-    if (result.reasoningEffort == null) result.reasoningEffort = effort
     if (mode === 'brief' && maxOutputTokens != null && (result.maxTokens == null || result.maxTokens > maxOutputTokens)) result.maxTokens = maxOutputTokens
     else if (result.maxTokens == null && maxTokens != null) result.maxTokens = maxTokens
     return result
