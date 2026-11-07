@@ -96,6 +96,21 @@ DSH 已开始的会话可能不允许切换预设，但不影响快速模式中�
 缺档位时由 `agent/created` 通过 `agent.model.select()` 声明默认档位，而不是在请求钩子里补。
 空转改由两项约束处理：`maxOutputTokens` 收窄单步输出预算，以及 persona 要求「不在推理里写产物正文、先落盘再迭代」。
 完整执行模式不设输出上限，避免把必要的长输出截断。
+### MCP 与预设子树的边界
+
+MCP 服务器必须写进预设自己的 `plugins` 列表才对该预设生效。profile 顶层
+（如 `~/.dsh/profiles/desktop/cordis.patch.yml`）里已有的 `@deepseek-ai/dsh-mcp-client`
+配置项**不会**自动追加进预设子树：预设由 `agentPresets.register({ id, plugins })`
+单独建树，工具面只来自这棵树。
+
+本插件因此在 `&fast-plugins` 锚点内显式挂了一条 `mcp-chrome-devtools`，
+`fast` 与 `fast-full` 共用该锚点，两个预设都带 MCP。
+
+`failOnStartupError` 保持默认 `false`：Chrome 未启动或 `--autoConnect` 连不上时，
+只丢失 `mcp__chrome-devtools__*` 工具并记一条错误，不阻断会话激活。
+`transport: stdio` 在挂载时会先起一次临时探测进程再起实际服务进程，
+冷启动会多一点延迟，这是快速模式下使用 stdio MCP 的固有成本。
+
 上述均为本插件配置；DSH 自身的权限、工具默认参数与生命周期行为仍由 DSH 管理。
 
 ## 参数与输出预算

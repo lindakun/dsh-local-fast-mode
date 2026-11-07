@@ -62,6 +62,21 @@
               searchTimeoutMs: 20000
           - id: present
             name: '@deepseek-ai/dsh-tool-present'
+          # MCP 只挂在本预设的 plugins 列表里生效：profile 顶层的同名配置项
+          # 不会自动追加进预设子树，两个预设都必须显式列出。
+          # failOnStartupError 保持默认 false：Chrome 未连接时只丢工具，不阻断会话。
+          - id: mcp-chrome-devtools
+            name: '@deepseek-ai/dsh-mcp-client'
+            config:
+              serverName: chrome-devtools
+              transport: stdio
+              command: /opt/homebrew/bin/chrome-devtools-mcp
+              args:
+                - --autoConnect
+                - --channel=stable
+                - --usageStatistics=false
+                - --viewport=1280x720
+              toolCallTimeoutMs: 60000
           - id: fast-tuning
             name: dsh-local-fast-mode/tuning
             config:
